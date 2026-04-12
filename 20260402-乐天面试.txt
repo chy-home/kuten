@@ -1,0 +1,223 @@
+发言人1   00:00
+How, how do I address it? Yeah, so I am Howard. I'm the hiring manager based in Singapore. Together with me is DJ. So DJ is one of the one of the hiring managers. So we manage different teams, then we have our senior engineers, Rick and also Benson who are based in China, but then we is helping us organize the interview. So thank you for your time. So this, this role is. In your software engineer for rock. We belong to jtd global Technology department, which is one of the departments within rappahan.
+我该怎么处理呢？是啊，我叫霍华德。我是驻新加坡的招聘经理。跟我在一起的是DJ。所以DJ是其中一位招聘经理。所以我们管理着不同的团队。此外，我们的高级工程师Rick和Benson常驻中国，他们也在协助我们组织面试。所以，谢谢您的时间。所以，这个角色就是……在你的摇滚软件工程师中。我们隶属于JTD全球技术部，该部门是Rappahan公司下属的一个部门。
+ 
+发言人1   00:46
+We handle all the advertising related product. So when when you see advertisements in India, whoo Google Facebook or you see advertisements in our, eeco merce website. So it's all supported by our team or or one of the themes within the So. So that's like the main responsibility is for us .
+我们处理所有与广告相关的产品。所以当你在印度看到广告，谷歌Facebook或者我们的eeco merce网站上看到广告时。所以这一切都得到我们团队或其中一个主题的支持。这就像主要责任在于我们一样。
+ 
+发言人2   01:10
+then .
+那么。
+ 
+发言人1   01:12
+because we have a lot of projects, so we needed to hire additional resources to help us deliver those projects for this year. And this is why we're interviewing for this old. So thank you for your time. Maybe would be good to start if you can share more information about yourself.
+因为我们有很多项目，所以我们需要雇用额外的资源来帮助我们交付今年的这些项目。这就是为什么我们要采访这位老人的原因。所以谢谢你的时间。如果你能分享更多关于自己的信息，也许开始会很好。
+ 
+发言人3   01:36
+Okay, thank you.
+好的，谢谢。
+ 
+发言人1   01:38
+yeah, once maybe you can ask questions then. Yeah, if, if needed, can also help translate.
+是的，也许有一次你可以问问题。是的，如果需要的话，还可以帮助翻译。
+ 
+发言人4   01:50
+Let me ask a question regarding the standard experience and the technical .
+让我问一个关于标准经验和技术的问题。
+ 
+发言人3   01:54
+things .
+事情。
+ 
+发言人4   01:56
+also about, so you mentioned about the big data technology, to support, so what kind of the technology are you using for the big data? Thank you. So what kind of size, did you handle about the big data? So terabyte, petabyte about. Size?
+还有，你提到了大数据技术来支持，那么你使用什么样的技术来支持大数据？谢谢。那么，你处理大数据的规模是什么？所以TB，大约是PB。尺寸？
+ 
+发言人3   02:27
+Next question on the Java experience.
+下一个关于Java体验的问题。
+ 
+发言人4   02:32
+So have you ever developed the rest API on the web application before? Yes, so I think in Java, for example, the using the Spring framework, develop the web application and decrease response like this or or any in other framework and develop the kind of application.
+那么你以前在web应用程序上开发过其余的API吗？是的，所以我认为在Java中，例如使用Spring框架，开发web应用程序并减少响应，这样或任何其他框架中，并开发这种类型的应用程序。
+ 
+发言人3   03:03
+So next question regarding guiding a spring.
+所以下一个问题是关于引导弹簧的。
+ 
+发言人4   03:06
+So spring is kind of huge component. So screen has adapted the component, I think, as you mentioned, why the screen cloud? And also that from your resume, I saw the spring AI, So may I know that what kind of the spring component, had ever used before And also the how you utilize those kind of component? May I know the detail? Thank you for me. This is just question.
+所以春天是一个很重要的组成部分。所以屏幕已经适应了组件，我想，正如你所提到的，为什么屏幕云？而且从你的简历中，我看到了spring AI，所以我可以知道以前使用过什么样的spring组件，以及你如何利用这些组件吗？我可以知道细节吗？谢谢你替我。这只是个问题。
+ 
+发言人3   03:36
+So for the arrangement.
+所以为了安排。
+ 
+发言人4   03:37
+so you can speak Japanese as well.
+这样你也会说日语。
+ 
+发言人4   03:49
+And you can, you can.
+你可以，你可以。
+ 
+发言人3   04:04
+Java developer. Manager, So are you somebody who actively called now or you are somebody who is more of leading a team? Do you still from in the last experience?
+Java开发者。经理，那么你是现在积极打电话的人，还是更像是领导团队的人？你仍然来自上次的经历吗？
+ 
+发言人1   04:29
+Maybe re maybe can help us us the question because the profile is more on that side so we will know if he's still too coding right now. He has done in the past but not recently.
+也许可以帮助我们回答这个问题，因为个人资料更多的是在那方面，所以我们会知道他现在是否仍然过于编码。他过去做过，但最近没有。
+ 
+发言人3   04:45
+Maybe if I have, what is the development you did in last project? What was the thing that you developed in the last project?
+也许如果我有，你在上一个项目中做了什么开发？你在上一个项目中开发了什么东西？
+ 
+发言人7   05:02
+After that is the calculation where you will save the data to save the data resolution.
+之后是计算，您将保存数据以保存数据分辨率。
+ 
+发言人5   05:08
+Hi.
+嗨。
+ 
+发言人7   05:09
+yes to database, to .
+是的，数据库。
+ 
+发言人5   05:12
+this, to database open is a database, the developer by Huai, the Huawei database open.
+这个，数据库开放是一个数据库，由华为开发的，华为数据库开放。
+ 
+发言人3   05:20
+open Hong Kong. So it's a SQL database.
+开放香港。所以它是一个SQL数据库。
+ 
+发言人5   05:31
+Yes, it's called the database. Open is a based on, put green, put green, put green this.
+是的，它被称为数据库。开放是一个基于，把绿色放进去，把绿色放进去。
+ 
+发言人3   05:44
+So from A to open gas form of data, you are transferring like every every day job, how often you run this job? What is the Frey of this job?
+因此，从数据的开放气体形式，您正在像每天的工作一样转移，您多久运行一次这个工作？这份工作有什么好处？
+ 
+发言人2   06:06
+And the data volume, like 700 million.
+和数据量，约为7亿。
+ 
+发言人3   06:13
+Real time? 700 million?
+实时？7亿？
+ 
+发言人7   06:15
+Yeah, 7.
+是的，7。
+ 
+发言人3   06:27
+So if it is real time, how hard is the source?
+那么，如果它是实时的，源的难度有多大？
+ 
+发言人7   06:44
+I think that maybe for the real time, it's smart thing. Blink spark about the data is not how to put the .
+我认为这可能是实时的，这是一件聪明的事情。关于数据的闪烁火花不是如何放置的。
+ 
+发言人3   06:53
+like kind of D.
+有点像D。
+ 
+发言人7   06:54
+maybe. Column store? It is is not possible for otherwise I think.
+也许。列存储？我认为这是不可能的。
+ 
+发言人7   07:04
+It real?
+是真的吗？
+ 
+发言人3   07:13
+So, so you have, you say that it's 4 million, 7 million. You are reading from, right? So this is per day it day.
+所以，你说它是四百万，七百万。你在阅读，对吗？所以这是每天一天。
+ 
+发言人3   07:43
+So it is still very huge scale, right? Do you have what is the size of your link cluster? How, how big is your screen .
+所以它的规模仍然非常巨大，对吗？你的链接集群有多大？你的屏幕有多大？
+ 
+发言人5   07:53
+cluster?
+集群？
+ 
+发言人3   07:55
+Many nodes, how many people in your link linked cluster?
+有多少节点，链接集群中有多少人？
+ 
+发言人6   08:05
+Today.
+今天。
+ 
+发言人2   08:06
+you are not quite familiar with those infrastructure.
+你对这些基础设施不是很熟悉。
+ 
+发言人7   08:15
+Per is not. Pressure from the data is consuming, including consuming the data from the database, but it's not have so many pressure. So no, no need so much hardware, hardware like a high CPU, high memory.
+每不是。来自数据的压力正在消耗，包括从数据库中消耗数据，但压力并不那么大。所以不，不需要那么多硬件，硬件就像高CPU，高内存。
+ 
+发言人3   08:39
+So let us say your clink cluster went down, okay, and was down per one hour, okay? C cluster is down for one hour. Okay, now the link started again. Okay, how would start from the same point it vary, how does it accurately read from the place where it stopped, what happens when it reached down? So let us say your plan cluster is completely down and it starts again. What would happen? You can.
+那么让我们说你的叮当声簇下降了，每一小时下降了，好吗？C群集关闭一小时。好的，现在链接重新开始。好的，如何从它变化的同一点开始，它如何从它停止的地方准确地读取，当它向下时会发生什么？那么让我们假设您的计划集群完全关闭并重新启动。会发生什么？你可以。
+ 
+发言人7   09:26
+It's a little bit complicated for me to translate. So technically, I think last yesterday 3% didn know.
+对我来说翻译有点复杂。所以从技术上讲，我认为昨天有3% 的人不知道。
+ 
+发言人2   09:46
+We break down in the middle, then it will have the gap between the master and the same, right? And there has a cache server where that where we consume. And at this time, if they will synchronize the status and will start from the broken plan.
+我们在中间分解，那么它就会在母版和相同的母版之间有间隙，对吗？并且有一个缓存服务器，我们在那里消费。此时，如果他们将同步状态并从损坏的计划开始。
+ 
+发言人3   10:17
+When you say mustard and flame, it is in flint cluster. Is it in Fl master slave in Flin?
+当你说芥末和火焰时，它在燧石簇中。它在Flin的fll主从中吗？
+ 
+发言人3   10:40
+I am saying it is not one node, the whole link cluster. Let us say you have a infrastructure of 10 nodes in cluster. All the 10 nodes went down. No, no, no is up the complete.
+我是说它不是一个节点，而是整个链接集群。假设您的集群中有10个节点的基础设施。所有10个节点都崩溃了。不，不，不已经结束了。
+ 
+发言人3   11:01
+One hour it came. There is nothing survived during that time. So inf. There is a concept of partition. Are you aware of what is a partition income? What is the partition in Kaka? So, so if my ofka topic has three partition, 3 partition, okay? If my topic has three partitions and I am, I put 100 messages into Kafka, how does Kafka divide these hundred messages into three partitions? So let's say I do not want to follow as, and I want to, let's say in my message there is a. This is orders later. My message? I'm typing.
+它来了一个小时。在这段时间里，没有什么幸存下来的。所以，inf。有一个分割的概念。你知道什么是分区收入吗？卡卡的分区是什么？所以，如果我的ofka主题有三个分区，三个分区，好吗？如果我的主题有三个分区，我将100条消息放入Kafka，Kafka如何将这百条消息分成三个分区？所以假设我不想跟随，并且我想，假设在我的信息中有一个。这是以后的命令。我的信息？我在打字。
+ 
+发言人1   12:19
+Answer in.
+答案在。
+ 
+发言人3   12:25
+The requirements is so there are three partitions, right? Let's say there are 100 messages, messages of customer X, all the messages for customer X should go to the same partition. So let's say there are customers and each customer can have different messages. So one customer should go to the same partition of. One it is of customer X should go to the payment partition.
+需求是，所以有三个分区，对吗？假设有100条消息，客户X的消息，所有客户X的消息都应该发送到同一个分区。所以假设有客户，每个客户可以有不同的信息。所以一个客户应该去同一个分区。客户X的一个应该去支付分区。
+ 
+发言人7   13:09
+I think we have the, for example, to keep the other. There's only one position to set to one position. But if it is a multi partition, how to keep the order? No experience for this one.
+我认为我们有，例如，保留另一个。只有一个位置可以设置为一个位置。但如果是多分区，如何保持订单？没有这方面的经验。
+ 
+发言人3   13:22
+Okay, no, so. You used for the question of post email database, right? Are you comfortable with SQL SQL query?
+好的，不，那么。你用它来回答邮件数据库的问题，对吧？你对SQL查询感到满意吗？
+ 
+发言人3   13:45
+Thank you, thank you for your time.
+谢谢，谢谢您的时间。
+ 
+发言人1   13:50
+RI Ben, do you have any question? Maybe if you want to have some follow up questions?
+里本，你有什么问题吗？也许如果你想有一些后续问题？
+ 
+发言人3   13:57
+I think I'm not from my.
+我想我不是来自我的。
+ 
+发言人1   14:05
+Do you have any question for? Okay then, yeah, we'll give more to HR and HR will contact you regarding the next steps. Thank you for your time. Maybe we can stay in the hall.
+您有什么问题吗？好的，那我们就把更多材料交给人力资源部，人力资源部会联系您，告知后续步骤。感谢您的时间。也许我们可以待在大厅里。
+ 
+发言人7   14:22
+Yeah.
+是的。
