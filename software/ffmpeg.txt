@@ -1,0 +1,34 @@
+## 下载仓库
+git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg
+## 切换版本
+git checkout remotes/origin/release/对应的版本
+
+
+
+
+# 执行配置
+./configure \
+  --prefix=/usr/local/ffmpeg \          # 编译后安装路径（自定义）
+  --enable-gpl \                        # 启用 GPL 协议（支持 x264/x265）
+  --enable-nonfree \                    # 启用非免费编码器（如 fdk-aac）
+  --enable-libx264 \                    # 启用 x264（H.264 编码）
+  --enable-libx265 \                    # 启用 x265（H.265 编码）
+  --enable-libfdk-aac \                 # 启用 fdk-aac（高品质 AAC 编码）
+  --enable-libmp3lame \                 # 启用 MP3 编码
+  --enable-sdl2 \                       # 启用 SDL2（ffplay 播放）
+  --enable-ffplay \                     # 启用 ffplay 工具
+  --enable-ffprobe \                    # 启用 ffprobe 工具
+  --disable-debug \                     # 禁用调试（减小体积）
+  --enable-small                        # 优化体积
+
+# 编译
+make -j8
+
+
+
+
+ ./configure  && make
+
+
+
+ffmpeg -version
