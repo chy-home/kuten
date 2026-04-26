@@ -50,10 +50,17 @@
           <input id="includePhrases" type="checkbox" checked>
           <span>提取短语</span>
         </label>
+
       </div>
 
       <div class="controls online-controls">
-        <label>
+        <div class="online-provider-row">
+          <label class="checkbox">
+            <input id="useOnlineModel" type="checkbox">
+            <span>使用在线模型</span>
+          </label>
+
+          <label>
           <span>在线词库/翻译源</span>
           <select id="onlineProvider">
             <option value="combo">组合模式：Free Dictionary + MyMemory</option>
@@ -62,7 +69,8 @@
             <option value="libretranslate">LibreTranslate 兼容接口</option>
             <option value="dictionaryapi">Free Dictionary API（仅单词定义）</option>
           </select>
-        </label>
+          </label>
+        </div>
 
         <label class="wide-field">
           <span>翻译接口地址</span>
@@ -95,10 +103,19 @@
       <div class="panel-header">
         <h2>提取结果</h2>
         <div class="result-actions">
+          <button id="trimKnownWordsButton" class="ghost">裁剪已认识单词</button>
           <button id="copyButton" class="ghost">复制结果</button>
           <button id="downloadButton" class="ghost">下载 TXT</button>
         </div>
       </div>
+
+      <label class="known-words-field">
+        <span>已认识单词</span>
+        <textarea
+          id="knownWords"
+          placeholder="输入已认识的单词，可用空格、逗号或换行分隔。分词时会自动排除，也可对当前结果执行裁剪。"
+        ></textarea>
+      </label>
 
       <div class="summary" id="summary">
         尚未提取

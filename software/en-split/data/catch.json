@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-04-26T08:49:42.136Z",
+  "updatedAt": "2026-04-26T09:00:14.755Z",
   "items": {
     "combo:meet:": {
       "ipa": "/miːt/",
@@ -73,6 +73,10 @@
     "combo:wish:": {
       "ipa": "/wɪʃ/",
       "meaning": "对某事或某事发生的渴望、希望或渴望。"
+    },
+    "combo:meetdd:": {
+      "ipa": "",
+      "meaning": "meetdd"
     }
   }
 }

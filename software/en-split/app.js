@@ -11,9 +11,12 @@ const minWordLength = document.getElementById("minWordLength");
 const minPhraseFrequency = document.getElementById("minPhraseFrequency");
 const excludeStopwords = document.getElementById("excludeStopwords");
 const includePhrases = document.getElementById("includePhrases");
+const useOnlineModel = document.getElementById("useOnlineModel");
 const onlineProvider = document.getElementById("onlineProvider");
 const translationEndpoint = document.getElementById("translationEndpoint");
 const translationApiKey = document.getElementById("translationApiKey");
+const knownWords = document.getElementById("knownWords");
+const trimKnownWordsButton = document.getElementById("trimKnownWordsButton");
 
 const stopwords = new Set([
   "a", "an", "and", "are", "as", "at", "be", "been", "being", "but", "by", "for", "from",
@@ -25,6 +28,8 @@ const stopwords = new Set([
 
 const ONLINE_LOOKUP_DELAY_MIN_MS = 800;
 const ONLINE_LOOKUP_DELAY_MAX_MS = 2200;
+const USE_ONLINE_MODEL_STORAGE_KEY = "en-split-use-online-model";
+const KNOWN_WORDS_STORAGE_KEY = "en-split-known-words";
 
 let ipaDictionary = {}
 
@@ -41,6 +46,13 @@ let currentExtraction = null;
 
 lookupCacheLoadPromise = loadLookupCacheFromFile();
 
+restoreUserPreferences();
+syncOnlineControls();
+useOnlineModel.addEventListener("change", () => {
+  persistUserPreferences();
+  syncOnlineControls();
+});
+knownWords.addEventListener("input", persistUserPreferences);
 onlineProvider.addEventListener("change", syncOnlineProviderFields);
 syncOnlineProviderFields();
 
@@ -77,19 +89,23 @@ extractButton.addEventListener("click", async () => {
     minLength: Number(minWordLength.value) || 3,
     minPhraseHits: Number(minPhraseFrequency.value) || 2,
     excludeCommonWords: excludeStopwords.checked,
-    includePhraseExtraction: includePhrases.checked
-  });
-  const localCacheHits = applyLookupCacheToExtraction(extraction, {
-    provider: onlineProvider.value,
-    translationEndpoint: translationEndpoint.value.trim()
+    includePhraseExtraction: includePhrases.checked,
+    knownWords: getKnownWordSet()
   });
 
-  if (localCacheHits > 0) {
-    extraction.cacheStats = {
-      hits: localCacheHits,
-      saved: 0,
-      writeFailed: false
-    };
+  if (useOnlineModel.checked) {
+    const localCacheHits = applyLookupCacheToExtraction(extraction, {
+      provider: onlineProvider.value,
+      translationEndpoint: translationEndpoint.value.trim()
+    });
+
+    if (localCacheHits > 0) {
+      extraction.cacheStats = {
+        hits: localCacheHits,
+        saved: 0,
+        writeFailed: false
+      };
+    }
   }
 
   currentExtraction = extraction;
@@ -98,6 +114,11 @@ extractButton.addEventListener("click", async () => {
 });
 
 translateButton.addEventListener("click", async () => {
+  if (!useOnlineModel.checked) {
+    summary.textContent = "已关闭在线模型，不会请求在线翻译。";
+    return;
+  }
+
   if (!currentExtraction) {
     summary.textContent = "请先点击“分词”生成结果。";
     return;
@@ -117,6 +138,23 @@ translateButton.addEventListener("click", async () => {
   } catch (error) {
     summary.textContent = error.message || "在线翻译失败。";
   }
+});
+
+trimKnownWordsButton.addEventListener("click", () => {
+  if (!currentExtraction) {
+    summary.textContent = "请先点击“分词”生成结果。";
+    return;
+  }
+
+  const knownWordSet = getKnownWordSet();
+  if (knownWordSet.size === 0) {
+    summary.textContent = "请先填写已认识单词。";
+    return;
+  }
+
+  const trimStats = trimKnownWordsFromExtraction(currentExtraction, knownWordSet);
+  resultText.value = buildReport(currentExtraction);
+  summary.textContent = `${buildSummaryText(currentExtraction)} 已裁剪 ${trimStats.words} 个单词，${trimStats.phrases} 个短语。`;
 });
 
 clearButton.addEventListener("click", () => {
@@ -166,6 +204,7 @@ downloadButton.addEventListener("click", () => {
 function extractVocabulary(text, options) {
   const normalizedText = text.replace(/\r\n/g, "\n");
   const tokens = normalizeTokens(normalizedText);
+  const knownWordSet = options.knownWords || new Set();
   const wordCounts = new Map();
   const wordContexts = new Map();
 
@@ -175,6 +214,10 @@ function extractVocabulary(text, options) {
     }
 
     if (options.excludeCommonWords && stopwords.has(token)) {
+      continue;
+    }
+
+    if (isKnownWord(token, knownWordSet)) {
       continue;
     }
 
@@ -192,7 +235,7 @@ function extractVocabulary(text, options) {
     }));
 
   const phrases = options.includePhraseExtraction
-    ? extractPhrases(normalizedText, options.minPhraseHits)
+    ? extractPhrases(normalizedText, options.minPhraseHits, knownWordSet)
     : [];
 
   return { words, phrases };
@@ -257,7 +300,7 @@ async function fetchJson(path) {
   return response.json();
 }
 
-function extractPhrases(text, minHits) {
+function extractPhrases(text, minHits, knownWordSet = new Set()) {
   const phraseCounts = new Map();
   const phraseContexts = new Map();
   const segments = text
@@ -271,6 +314,10 @@ function extractPhrases(text, minHits) {
       for (let index = 0; index <= segment.length - size; index += 1) {
         const slice = segment.slice(index, index + size);
         if (!isUsefulPhrase(slice)) {
+          continue;
+        }
+
+        if (slice.every((word) => isKnownWord(word, knownWordSet))) {
           continue;
         }
 
@@ -302,6 +349,35 @@ function isUsefulPhrase(words) {
   }
 
   return words.some((word) => word.length >= 4);
+}
+
+function getKnownWordSet() {
+  return new Set(normalizeTokens(knownWords.value).map((word) => lemmatizeWord(word)));
+}
+
+function isKnownWord(word, knownWordSet) {
+  if (!knownWordSet || knownWordSet.size === 0) {
+    return false;
+  }
+
+  const normalizedWord = word.toLowerCase();
+  return knownWordSet.has(normalizedWord) || knownWordSet.has(lemmatizeWord(normalizedWord));
+}
+
+function trimKnownWordsFromExtraction(extraction, knownWordSet) {
+  const beforeWordCount = extraction.words.length;
+  const beforePhraseCount = extraction.phrases.length;
+
+  extraction.words = extraction.words.filter((item) => !isKnownWord(item.word, knownWordSet));
+  extraction.phrases = extraction.phrases.filter((item) => {
+    const words = item.phrase.split(" ");
+    return !words.every((word) => isKnownWord(word, knownWordSet));
+  });
+
+  return {
+    words: beforeWordCount - extraction.words.length,
+    phrases: beforePhraseCount - extraction.phrases.length
+  };
 }
 
 function buildReport(extraction) {
@@ -950,6 +1026,41 @@ function normalizeLookupCacheValue(value) {
     ipa: typeof value.ipa === "string" ? value.ipa : "",
     meaning: typeof value.meaning === "string" ? value.meaning : ""
   };
+}
+
+function restoreUserPreferences() {
+  try {
+    const storedUseOnlineModel = localStorage.getItem(USE_ONLINE_MODEL_STORAGE_KEY);
+    if (storedUseOnlineModel !== null) {
+      useOnlineModel.checked = storedUseOnlineModel === "true";
+    } else {
+      useOnlineModel.checked = false;
+    }
+
+    const storedKnownWords = localStorage.getItem(KNOWN_WORDS_STORAGE_KEY);
+    if (storedKnownWords !== null) {
+      knownWords.value = storedKnownWords;
+    }
+  } catch (error) {
+    return;
+  }
+}
+
+function persistUserPreferences() {
+  try {
+    localStorage.setItem(USE_ONLINE_MODEL_STORAGE_KEY, String(useOnlineModel.checked));
+    localStorage.setItem(KNOWN_WORDS_STORAGE_KEY, knownWords.value);
+  } catch (error) {
+    return;
+  }
+}
+
+function syncOnlineControls() {
+  const enabled = useOnlineModel.checked;
+  onlineProvider.disabled = !enabled;
+  translationEndpoint.disabled = !enabled;
+  translationApiKey.disabled = !enabled;
+  translateButton.disabled = !enabled;
 }
 
 function syncOnlineProviderFields() {

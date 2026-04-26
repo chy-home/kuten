@@ -45,6 +45,15 @@ async function main() {
     appContext.document.elements.sourceText.value = "cacheword";
     await appContext.document.elements.extractButton.dispatch("click");
 
+    assert.match(appContext.document.elements.resultText.value, /cacheword .* 待补充释义/);
+    assert.doesNotMatch(appContext.document.elements.summary.textContent, /复用缓存/);
+    assert.equal(appContext.document.elements.translateButton.disabled, true);
+    assert.equal(appContext.externalFetches.length, 0);
+
+    appContext.document.elements.useOnlineModel.checked = true;
+    await appContext.document.elements.useOnlineModel.dispatch("change");
+    await appContext.document.elements.extractButton.dispatch("click");
+
     assert.match(appContext.document.elements.resultText.value, /cacheword \/cache-word\/ 来自文件缓存/);
     assert.match(appContext.document.elements.summary.textContent, /复用缓存 1 条/);
     assert.equal(appContext.externalFetches.length, 0);
@@ -55,6 +64,37 @@ async function main() {
 
     assert.match(appContext.document.elements.resultText.value, /freshword .* 在线翻译结果/);
     assert.ok(appContext.timeoutDelays.some((delay) => delay >= 800 && delay <= 2200));
+
+    const fetchCountBeforeOnlineDisabled = appContext.externalFetches.length;
+    appContext.document.elements.useOnlineModel.checked = false;
+    await appContext.document.elements.useOnlineModel.dispatch("change");
+    appContext.document.elements.sourceText.value = "offlineword";
+    await appContext.document.elements.extractButton.dispatch("click");
+    await appContext.document.elements.translateButton.dispatch("click");
+
+    assert.equal(appContext.externalFetches.length, fetchCountBeforeOnlineDisabled);
+    assert.match(appContext.document.elements.summary.textContent, /已关闭在线模型/);
+    assert.equal(appContext.document.elements.translateButton.disabled, true);
+
+    appContext.document.elements.knownWords.value = "task\nknownword";
+    await appContext.document.elements.knownWords.dispatch("input");
+    appContext.document.elements.sourceText.value = "knownword tasks unknownword unknownword knownword tasks";
+    await appContext.document.elements.extractButton.dispatch("click");
+
+    assert.doesNotMatch(appContext.document.elements.resultText.value, /\bknownword\b/);
+    assert.doesNotMatch(appContext.document.elements.resultText.value, /\btasks\b/);
+    assert.match(appContext.document.elements.resultText.value, /\bunknownword\b/);
+
+    appContext.document.elements.knownWords.value = "";
+    appContext.document.elements.sourceText.value = "freshword keepword keepword";
+    await appContext.document.elements.extractButton.dispatch("click");
+
+    appContext.document.elements.knownWords.value = "freshword";
+    await appContext.document.elements.trimKnownWordsButton.dispatch("click");
+
+    assert.doesNotMatch(appContext.document.elements.resultText.value, /\bfreshword\b/);
+    assert.match(appContext.document.elements.resultText.value, /\bkeepword\b/);
+    assert.match(appContext.document.elements.summary.textContent, /已裁剪/);
 
     console.log("cache flow ok");
   } finally {
@@ -78,6 +118,7 @@ async function runAppInBrowserLikeContext() {
     Date,
     Error,
     JSON,
+    localStorage: createLocalStorage(),
     Map,
     Math,
     Number,
@@ -155,9 +196,24 @@ function createElements() {
     minPhraseFrequency: createElement("input", { value: "2" }),
     excludeStopwords: createElement("input", { checked: true }),
     includePhrases: createElement("input", { checked: true }),
+    useOnlineModel: createElement("input", { checked: true }),
     onlineProvider: createElement("select", { value: "combo" }),
     translationEndpoint: createElement("input", { value: "" }),
-    translationApiKey: createElement("input", { value: "" })
+    translationApiKey: createElement("input", { value: "" }),
+    knownWords: createElement("textarea", { value: "" }),
+    trimKnownWordsButton: createElement("button")
+  };
+}
+
+function createLocalStorage() {
+  const items = new Map();
+  return {
+    getItem(key) {
+      return items.has(key) ? items.get(key) : null;
+    },
+    setItem(key, value) {
+      items.set(key, String(value));
+    }
   };
 }
 

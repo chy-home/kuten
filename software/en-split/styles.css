@@ -195,6 +195,13 @@ textarea:focus {
   min-width: min(100%, 420px);
 }
 
+.online-provider-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .online-controls .wide-field input {
   width: min(100%, 340px);
 }
@@ -250,6 +257,31 @@ button:active,
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.known-words-field {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.known-words-field span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+#knownWords {
+  min-height: 86px;
+  font-family: var(--sans);
+  font-size: 14px;
+}
+
+button:disabled,
+.controls input:disabled,
+.controls select:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  transform: none;
 }
 
 @media (max-width: 720px) {
