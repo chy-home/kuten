@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>英文单词与短语提取器</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="hero">
+      <p class="eyebrow">Intranet Ready</p>
+      <h1>英文单词与短语提取器</h1>
+      <p class="subtitle">
+        支持上传 <code>.txt</code> 会议记录，或直接粘贴文本。先分词生成词汇与短语清单，再按需在线补充释义。
+      </p>
+    </section>
+
+    <section class="panel input-panel">
+      <div class="panel-header">
+        <h2>输入内容</h2>
+        <label class="file-picker">
+          <input id="txtFile" type="file" accept=".txt,text/plain">
+          <span>选择 TXT 文件</span>
+        </label>
+      </div>
+
+      <textarea
+        id="sourceText"
+        placeholder="可直接粘贴会议记录、访谈纪要、邮件正文等英文文本。"
+      ></textarea>
+
+      <div class="controls">
+        <label>
+          <span>最短单词长度</span>
+          <input id="minWordLength" type="number" min="2" max="12" value="3">
+        </label>
+
+        <label>
+          <span>短语最小重复次数</span>
+          <input id="minPhraseFrequency" type="number" min="1" max="10" value="2">
+        </label>
+
+        <label class="checkbox">
+          <input id="excludeStopwords" type="checkbox" checked>
+          <span>过滤常见虚词</span>
+        </label>
+
+        <label class="checkbox">
+          <input id="includePhrases" type="checkbox" checked>
+          <span>提取短语</span>
+        </label>
+      </div>
+
+      <div class="controls online-controls">
+        <label>
+          <span>在线词库/翻译源</span>
+          <select id="onlineProvider">
+            <option value="combo">组合模式：Free Dictionary + MyMemory</option>
+            <option value="mymemory">MyMemory 公共翻译接口</option>
+            <option value="google">Google Cloud Translation API</option>
+            <option value="libretranslate">LibreTranslate 兼容接口</option>
+            <option value="dictionaryapi">Free Dictionary API（仅单词定义）</option>
+          </select>
+        </label>
+
+        <label class="wide-field">
+          <span>翻译接口地址</span>
+          <input
+            id="translationEndpoint"
+            type="text"
+            value=""
+            placeholder="例如：http://内网地址:5000/translate"
+          >
+        </label>
+
+        <label class="wide-field">
+          <span>API Key（可选）</span>
+          <input
+            id="translationApiKey"
+            type="text"
+            placeholder="LibreTranslate / DeepL 等需要时填写"
+          >
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="extractButton" class="primary">分词</button>
+        <button id="translateButton" class="ghost">翻译</button>
+        <button id="clearButton" class="ghost">清空</button>
+      </div>
+    </section>
+
+    <section class="panel output-panel">
+      <div class="panel-header">
+        <h2>提取结果</h2>
+        <div class="result-actions">
+          <button id="copyButton" class="ghost">复制结果</button>
+          <button id="downloadButton" class="ghost">下载 TXT</button>
+        </div>
+      </div>
+
+      <div class="summary" id="summary">
+        尚未提取
+      </div>
+
+      <textarea
+        id="resultText"
+        readonly
+        placeholder="点击“分词”后，这里会生成可直接复制的文本结果。"
+      ></textarea>
+
+      <p class="hint">
+        说明：音标采用“内置常见词词典 + 离线规则回退”生成。常见词更准确，生僻词和专有名词可能只提供近似读音。
+      </p>
+      <p class="hint">
+        在线补充说明：点击“翻译”后，仅会把离线未命中的单词或短语发送到所选在线服务，并在每次在线请求前做随机节流等待。`MyMemory` 可直接试用；`Google Cloud Translation API` 需要官方 API Key；`LibreTranslate` 公共站点通常也需要 API Key，内网部署时建议改成你自己的兼容服务地址。
+      </p>
+      <p class="hint">
+        缓存说明：在线查询结果会自动保存到 `data/catch.json`，刷新页面后会自动载入并优先复用。
+      </p>
+      <p class="hint">
+        词典已拆分为独立 JSON 文件。为确保浏览器能正常加载本地词典，建议通过静态文件服务访问，而不是直接以 `file://` 方式打开。
+      </p>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

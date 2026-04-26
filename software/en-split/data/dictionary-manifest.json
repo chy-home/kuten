@@ -1,0 +1,8 @@
+{
+  "version": "2026-04-26",
+  "dictionaries": {
+    "ipaDictionary": "./data/ipa-dictionary.json",
+    "meaningDictionary": "./data/meaning-dictionary.json",
+    "phraseMeaningDictionary": "./data/phrase-meaning-dictionary.json"
+  }
+}
