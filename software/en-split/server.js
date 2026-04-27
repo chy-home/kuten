@@ -71,7 +71,7 @@ async function serveStaticFile(urlPath, request, response) {
     const contentType = mimeTypes[path.extname(filePath)] || "application/octet-stream";
     response.writeHead(200, {
       "Content-Type": contentType,
-      "Cache-Control": pathname === "/data/catch.json" ? "no-store" : "no-cache"
+      "Cache-Control": shouldDisableCache(pathname) ? "no-store" : "no-cache"
     });
 
     if (request.method === "HEAD") {
@@ -127,6 +127,10 @@ function normalizeCachePayload(payload) {
     updatedAt: new Date().toISOString(),
     items
   };
+}
+
+function shouldDisableCache(pathname) {
+  return pathname === "/data/catch.json" || pathname === "/remember.txt";
 }
 
 function sendJson(response, statusCode, data) {

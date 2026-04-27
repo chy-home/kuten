@@ -30,6 +30,7 @@ const ONLINE_LOOKUP_DELAY_MIN_MS = 800;
 const ONLINE_LOOKUP_DELAY_MAX_MS = 2200;
 const USE_ONLINE_MODEL_STORAGE_KEY = "en-split-use-online-model";
 const KNOWN_WORDS_STORAGE_KEY = "en-split-known-words";
+const KNOWN_WORDS_FILE_PATH = "./remember.txt";
 
 let ipaDictionary = {}
 
@@ -42,11 +43,13 @@ let dictionariesReady = false;
 let dictionaryLoadPromise = null;
 let lookupCacheReady = false;
 let lookupCacheLoadPromise = null;
+let knownWordsReady = false;
+let knownWordsLoadPromise = null;
 let currentExtraction = null;
 
 lookupCacheLoadPromise = loadLookupCacheFromFile();
-
 restoreUserPreferences();
+knownWordsLoadPromise = loadKnownWordsFromFile();
 syncOnlineControls();
 useOnlineModel.addEventListener("change", () => {
   persistUserPreferences();
@@ -55,6 +58,13 @@ useOnlineModel.addEventListener("change", () => {
 knownWords.addEventListener("input", persistUserPreferences);
 onlineProvider.addEventListener("change", syncOnlineProviderFields);
 syncOnlineProviderFields();
+
+if (typeof window !== "undefined") {
+  window.__appStartupReady = Promise.allSettled([
+    lookupCacheLoadPromise,
+    knownWordsLoadPromise
+  ]);
+}
 
 txtFile.addEventListener("change", async (event) => {
   const [file] = event.target.files;
@@ -76,6 +86,7 @@ extractButton.addEventListener("click", async () => {
   }
 
   try {
+    await ensureKnownWordsLoaded();
     summary.textContent = "正在加载离线词典...";
     await ensureLookupCacheLoaded();
     await ensureDictionariesLoaded();
@@ -140,12 +151,13 @@ translateButton.addEventListener("click", async () => {
   }
 });
 
-trimKnownWordsButton.addEventListener("click", () => {
+trimKnownWordsButton.addEventListener("click", async () => {
   if (!currentExtraction) {
     summary.textContent = "请先点击“分词”生成结果。";
     return;
   }
 
+  await ensureKnownWordsLoaded();
   const knownWordSet = getKnownWordSet();
   if (knownWordSet.size === 0) {
     summary.textContent = "请先填写已认识单词。";
@@ -265,6 +277,19 @@ async function ensureDictionariesLoaded() {
   dictionariesReady = true;
 }
 
+async function ensureKnownWordsLoaded() {
+  if (knownWordsReady) {
+    return;
+  }
+
+  if (!knownWordsLoadPromise) {
+    knownWordsLoadPromise = loadKnownWordsFromFile();
+  }
+
+  await knownWordsLoadPromise;
+  knownWordsReady = true;
+}
+
 async function loadDictionaries() {
   try {
     const manifestResponse = await fetch("./data/dictionary-manifest.json");
@@ -274,9 +299,9 @@ async function loadDictionaries() {
 
     const manifest = await manifestResponse.json();
     const [ipaData, meaningData, phraseData] = await Promise.all([
-      fetchJson(manifest.dictionaries.ipaDictionary),
-      fetchJson(manifest.dictionaries.meaningDictionary),
-      fetchJson(manifest.dictionaries.phraseMeaningDictionary)
+      fetchMergedDictionary(manifest.dictionaries.ipaDictionary),
+      fetchMergedDictionary(manifest.dictionaries.meaningDictionary),
+      fetchMergedDictionary(manifest.dictionaries.phraseMeaningDictionary)
     ]);
 
     ipaDictionary = ipaData;
@@ -298,6 +323,40 @@ async function fetchJson(path) {
   }
 
   return response.json();
+}
+
+async function fetchMergedDictionary(paths) {
+  const pathList = Array.isArray(paths) ? paths : [paths];
+  const dictionaries = await Promise.all(pathList.map(fetchJson));
+  return dictionaries.reduce((merged, current) => ({ ...merged, ...current }), {});
+}
+
+async function loadKnownWordsFromFile() {
+  try {
+    const response = await fetch(KNOWN_WORDS_FILE_PATH, {
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        knownWordsReady = true;
+        return;
+      }
+      throw new Error("remember.txt 加载失败。");
+    }
+
+    applyKnownWordsText(await response.text());
+    knownWordsReady = true;
+  } catch (error) {
+    knownWordsReady = true;
+  }
+}
+
+function applyKnownWordsText(text) {
+  knownWords.value = typeof text === "string"
+    ? text.replace(/\r\n/g, "\n")
+    : "";
+  persistUserPreferences();
 }
 
 function extractPhrases(text, minHits, knownWordSet = new Set()) {
@@ -340,6 +399,10 @@ function extractPhrases(text, minHits, knownWordSet = new Set()) {
 }
 
 function isUsefulPhrase(words) {
+  if (words.some((word) => word.length < 2)) {
+    return false;
+  }
+
   if (words.every((word) => stopwords.has(word))) {
     return false;
   }
@@ -348,7 +411,15 @@ function isUsefulPhrase(words) {
     return false;
   }
 
+  if (words.some((word, index) => index > 0 && index < words.length - 1 && isConnectorWord(word))) {
+    return false;
+  }
+
   return words.some((word) => word.length >= 4);
+}
+
+function isConnectorWord(word) {
+  return word === "and" || word === "or" || word === "with" || word === "for" || word === "to";
 }
 
 function getKnownWordSet() {
@@ -430,6 +501,13 @@ function getIpa(word) {
     return ipaDictionary[word];
   }
 
+  if (word.includes("-")) {
+    const compoundIpa = getCompoundIpa(word);
+    if (compoundIpa) {
+      return compoundIpa;
+    }
+  }
+
   return `/${guessIpa(word)}/`;
 }
 
@@ -479,7 +557,51 @@ function getMeaning(term, contexts, type) {
     return bestMeaning;
   }
 
+  if (normalizedTerm.includes("-")) {
+    const compoundMeaning = getCompoundMeaning(normalizedTerm, contexts);
+    if (compoundMeaning) {
+      return compoundMeaning;
+    }
+  }
+
   return "待补充释义";
+}
+
+function getCompoundIpa(term) {
+  const parts = term.split("-").filter(Boolean);
+  if (parts.length < 2) {
+    return "";
+  }
+
+  return `/${parts.map((part) => stripIpaSlashes(getIpa(part))).join("-")}/`;
+}
+
+function stripIpaSlashes(ipa) {
+  return String(ipa).replace(/^\/+|\/+$/g, "");
+}
+
+function getCompoundMeaning(term, contexts) {
+  const spacedTerm = term.replace(/-/g, " ");
+  const directPhraseMeaning = phraseMeaningDictionary[spacedTerm];
+  if (directPhraseMeaning) {
+    return directPhraseMeaning;
+  }
+
+  const lemmatizedSpacedTerm = lemmatizePhrase(spacedTerm);
+  if (lemmatizedSpacedTerm !== spacedTerm && phraseMeaningDictionary[lemmatizedSpacedTerm]) {
+    return phraseMeaningDictionary[lemmatizedSpacedTerm];
+  }
+
+  const partMeanings = term
+    .split("-")
+    .map((part) => getMeaning(part, contexts, "word"))
+    .filter((meaning) => meaning && meaning !== "待补充释义");
+
+  if (partMeanings.length < 2 || partMeanings.length !== term.split("-").filter(Boolean).length) {
+    return "";
+  }
+
+  return partMeanings.join("");
 }
 
 function lemmatizePhrase(phrase) {

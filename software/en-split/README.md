@@ -94,3 +94,29 @@ node scripts/test-cache-flow.js
 ```
 
 这个测试会验证服务写入 `data/catch.json`、页面刷新后读取文件缓存，以及二次查询不联网直接复用缓存。
+## 离线词典扩展
+
+项目现在支持分层离线词典：
+
+- 基础层：`data/base-*.json`
+- 业务层：`data/*.json`
+
+加载顺序是基础层先加载，业务层后覆盖，便于接入较大的开源词典，同时保留 IT 广告业务自定义释义。
+
+推荐开源来源：
+
+- `ECDICT`：适合作为英汉释义基础层
+- `CMUdict`：适合作为英文音标基础层
+
+已内置导入脚本：
+
+```bash
+node scripts/import-ecdict.js /path/to/ecdict.csv
+```
+
+导入后可继续运行：
+
+```bash
+node scripts/enrich-delivery-ad-dictionaries.js
+node scripts/test-cache-flow.js
+```

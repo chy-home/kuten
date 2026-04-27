@@ -1,8 +1,17 @@
 {
   "version": "2026-04-26",
   "dictionaries": {
-    "ipaDictionary": "./data/ipa-dictionary.json",
-    "meaningDictionary": "./data/meaning-dictionary.json",
-    "phraseMeaningDictionary": "./data/phrase-meaning-dictionary.json"
+    "ipaDictionary": [
+      "./data/base-ipa-dictionary.json",
+      "./data/ipa-dictionary.json"
+    ],
+    "meaningDictionary": [
+      "./data/base-meaning-dictionary.json",
+      "./data/meaning-dictionary.json"
+    ],
+    "phraseMeaningDictionary": [
+      "./data/base-phrase-meaning-dictionary.json",
+      "./data/phrase-meaning-dictionary.json"
+    ]
   }
 }

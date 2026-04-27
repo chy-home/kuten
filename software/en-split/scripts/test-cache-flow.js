@@ -7,6 +7,7 @@ const { spawn } = require("node:child_process");
 
 const rootDir = path.resolve(__dirname, "..");
 const cachePath = path.join(rootDir, "data", "catch.json");
+const rememberPath = path.join(rootDir, "remember.txt");
 const appPath = path.join(rootDir, "app.js");
 const port = 18080;
 const baseUrl = `http://localhost:${port}`;
@@ -18,6 +19,7 @@ main().catch((error) => {
 
 async function main() {
   const originalCache = await fs.readFile(cachePath, "utf8");
+  const originalRemember = await readOptionalTextFile(rememberPath);
   const server = spawn(process.execPath, ["server.js"], {
     cwd: rootDir,
     env: {
@@ -28,6 +30,7 @@ async function main() {
   });
 
   try {
+    await fs.writeFile(rememberPath, "remembered\nsynced\n");
     await waitForServer(server);
     await postJson("/api/lookup-cache", {
       items: {
@@ -42,6 +45,7 @@ async function main() {
     assert.equal(savedCache.items["combo:cacheword:"].meaning, "来自文件缓存");
 
     const appContext = await runAppInBrowserLikeContext();
+    assert.equal(appContext.document.elements.knownWords.value, "remembered\nsynced\n");
     appContext.document.elements.sourceText.value = "cacheword";
     await appContext.document.elements.extractButton.dispatch("click");
 
@@ -101,6 +105,7 @@ async function main() {
     server.kill();
     await waitForExit(server);
     await fs.writeFile(cachePath, originalCache);
+    await restoreOptionalTextFile(rememberPath, originalRemember);
   }
 }
 
@@ -173,12 +178,39 @@ async function runAppInBrowserLikeContext() {
     filename: appPath
   });
   await Promise.resolve();
+  await context.window.__appStartupReady;
 
   return {
     ...context,
     externalFetches,
     timeoutDelays
   };
+}
+
+async function readOptionalTextFile(filePath) {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function restoreOptionalTextFile(filePath, content) {
+  if (content === null) {
+    try {
+      await fs.unlink(filePath);
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    return;
+  }
+
+  await fs.writeFile(filePath, content);
 }
 
 function createElements() {
