@@ -1,5 +1,5 @@
 {
-  "version": "2026-04-26",
+  "version": "2026-04-29",
   "dictionaries": {
     "ipaDictionary": [
       "./data/base-ipa-dictionary.json",
@@ -12,6 +12,10 @@
     "phraseMeaningDictionary": [
       "./data/base-phrase-meaning-dictionary.json",
       "./data/phrase-meaning-dictionary.json"
+    ],
+    "rootMemoryDictionary": [
+      "./data/base-root-memory-dictionary.json",
+      "./data/root-memory-dictionary.json"
     ]
   }
 }

@@ -103,17 +103,17 @@
       <div class="panel-header">
         <h2>提取结果</h2>
         <div class="result-actions">
-          <button id="trimKnownWordsButton" class="ghost">裁剪已认识单词</button>
+          <button id="trimKnownWordsButton" class="ghost">裁剪已忽略单词</button>
           <button id="copyButton" class="ghost">复制结果</button>
           <button id="downloadButton" class="ghost">下载 TSV</button>
         </div>
       </div>
 
       <label class="known-words-field">
-        <span>已认识单词</span>
+        <span>已忽略单词</span>
         <textarea
           id="knownWords"
-          placeholder="输入已认识的单词，可用空格、逗号或换行分隔。分词时会自动排除，也可对当前结果执行裁剪；刷新时会自动载入 ignore.txt。"
+          placeholder="输入要忽略的单词，可用空格、逗号或换行分隔。分词时会自动排除，也可对当前结果执行裁剪；刷新时会自动载入 ignore.txt。"
         ></textarea>
       </label>
 
@@ -134,6 +134,7 @@
               <th>次数</th>
               <th>音标</th>
               <th>释义</th>
+              <th>词根记忆</th>
             </tr>
           </thead>
           <tbody id="resultTableBody"></tbody>
@@ -155,6 +156,9 @@
         分词说明：“提取短语”默认关闭；只提取单词时启动更快。需要 2-3 词短语时再勾选，短语最小重复次数由上方输入框控制。
       </p>
       <p class="hint">
+        词根记忆说明：当前仅对单词展示“词根记忆”列，优先使用内置精确词条；未命中时再尝试轻量前后缀拆分提示。短语这一列默认留空。
+      </p>
+      <p class="hint">
         表格复制说明：结果区按表格展示；点击“复制结果”会按 Excel 友好的制表符分列格式复制；点击“下载 TSV”可直接用 Excel 打开。
       </p>
       <p class="hint">
@@ -167,7 +171,10 @@
         缓存说明：在线查询结果会自动保存到 `data/catch.json`，刷新页面后会自动载入并优先复用。
       </p>
       <p class="hint">
-        已认识单词说明：项目根目录下的 `ignore.txt` 支持手动编辑，刷新页面后会自动载入到“已认识单词”输入框。
+        已忽略单词说明：项目根目录下的 `ignore.txt` 支持手动编辑，刷新页面后会自动载入到“已忽略单词”输入框。
+      </p>
+      <p class="hint">
+        忽略文件说明：`ignore.txt` 里的单词会作为“已忽略单词”来源参与分词过滤，也可在页面里临时补充或修改。
       </p>
       <p class="hint">
         词典已拆分为独立 JSON 文件。为确保浏览器能正常加载本地词典，建议通过静态文件服务访问，而不是直接以 `file://` 方式打开。

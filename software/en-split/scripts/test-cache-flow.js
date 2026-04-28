@@ -49,7 +49,7 @@ async function main() {
     appContext.document.elements.sourceText.value = "cacheword";
     await appContext.document.elements.extractButton.dispatch("click");
 
-    assert.match(appContext.document.elements.resultText.value, /单词\tcacheword\t1\t.*\t待补充释义/);
+    assert.match(appContext.document.elements.resultText.value, /单词\tcacheword\t1\t.*\t待补充释义\t/);
     assert.doesNotMatch(appContext.document.elements.summary.textContent, /复用缓存/);
     assert.equal(appContext.document.elements.translateButton.disabled, true);
     assert.equal(appContext.externalFetches.length, 0);
@@ -58,7 +58,7 @@ async function main() {
     await appContext.document.elements.useOnlineModel.dispatch("change");
     await appContext.document.elements.extractButton.dispatch("click");
 
-    assert.match(appContext.document.elements.resultText.value, /单词\tcacheword\t1\t\/cache-word\/\t来自文件缓存/);
+    assert.match(appContext.document.elements.resultText.value, /单词\tcacheword\t1\t\/cache-word\/\t来自文件缓存\t/);
     assert.match(appContext.document.elements.summary.textContent, /复用缓存 1 条/);
     assert.equal(appContext.externalFetches.length, 0);
 
@@ -66,7 +66,7 @@ async function main() {
     await appContext.document.elements.extractButton.dispatch("click");
     await appContext.document.elements.translateButton.dispatch("click");
 
-    assert.match(appContext.document.elements.resultText.value, /单词\tfreshword\t1\t.*\t在线翻译结果/);
+    assert.match(appContext.document.elements.resultText.value, /单词\tfreshword\t1\t.*\t在线翻译结果\t/);
     assert.ok(appContext.timeoutDelays.some((delay) => delay >= 800 && delay <= 2200));
 
     appContext.nextExternalTranslation = "sameword";
@@ -74,7 +74,7 @@ async function main() {
     await appContext.document.elements.extractButton.dispatch("click");
     await appContext.document.elements.translateButton.dispatch("click");
 
-    assert.match(appContext.document.elements.resultText.value, /单词\tsameword\t1\t.*\t待补充释义/);
+    assert.match(appContext.document.elements.resultText.value, /单词\tsameword\t1\t.*\t待补充释义\t/);
     appContext.nextExternalTranslation = "在线翻译结果";
 
     const fetchCountBeforeOnlineDisabled = appContext.externalFetches.length;
@@ -95,9 +95,16 @@ async function main() {
 
     const knownWordsResultLines = appContext.document.elements.resultText.value.split("\n");
     assert.equal(knownWordsResultLines.length, 2);
-    assert.match(appContext.document.elements.resultText.value, /单词\tunknownword\t2\t/);
+    assert.equal(knownWordsResultLines[0], "序号\t类型\t内容\t次数\t音标\t释义\t词根记忆");
+    assert.match(appContext.document.elements.resultText.value, /单词\tunknownword\t2\t.*\t.*\t/);
     assert.doesNotMatch(appContext.document.elements.resultText.value, /单词\tknownword\t/);
     assert.doesNotMatch(appContext.document.elements.resultText.value, /单词\ttasks\t/);
+
+    appContext.document.elements.includePhrases.checked = true;
+    appContext.document.elements.sourceText.value = "real time real time";
+    await appContext.document.elements.extractButton.dispatch("click");
+    assert.match(appContext.document.elements.resultText.value, /短语\treal time\t2\t.*\t.*\t$/m);
+    appContext.document.elements.includePhrases.checked = false;
 
     appContext.document.elements.knownWords.value = "";
     appContext.document.elements.sourceText.value = "freshword keepword keepword";
@@ -107,7 +114,7 @@ async function main() {
     await appContext.document.elements.trimKnownWordsButton.dispatch("click");
 
     assert.doesNotMatch(appContext.document.elements.resultText.value, /单词\tfreshword\t/);
-    assert.match(appContext.document.elements.resultText.value, /单词\tkeepword\t2\t/);
+    assert.match(appContext.document.elements.resultText.value, /单词\tkeepword\t2\t.*\t.*\t/);
     assert.match(appContext.document.elements.summary.textContent, /已裁剪/);
 
     console.log("cache flow ok");

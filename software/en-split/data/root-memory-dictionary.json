@@ -1,0 +1,11 @@
+{
+  "airflow": "air + flow(流动) => Airflow 调度流",
+  "backfill": "back(回补) + fill(填充) => 回补",
+  "bigquery": "big + query(查询) => 大规模查询",
+  "floodlight": "flood(大量) + light(光/标记) => Floodlight 转化标记",
+  "lakehouse": "lake(湖) + house(仓) => 湖仓",
+  "pubsub": "pub(lish) + sub(scribe) => 发布订阅",
+  "real-time": "real(实时) + time(时间) => 实时",
+  "webhook": "web + hook(钩子) => Web 回调钩子",
+  "workload": "work(工作) + load(负载) => 工作负载"
+}

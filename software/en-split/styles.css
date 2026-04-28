@@ -308,6 +308,11 @@ button:active,
   font-family: var(--mono);
 }
 
+.result-table td:nth-child(7) {
+  min-width: 220px;
+  color: #5b4636;
+}
+
 .export-buffer {
   position: absolute;
   left: -9999px;
@@ -379,6 +384,6 @@ button:disabled,
   }
 
   .result-table {
-    min-width: 720px;
+    min-width: 980px;
   }
 }

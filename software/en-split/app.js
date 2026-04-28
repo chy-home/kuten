@@ -30,6 +30,43 @@ const stopwords = new Set([
   "we", "were", "what", "when", "where", "which", "who", "will", "with", "you", "your", "yours"
 ]);
 
+const ROOT_PREFIX_RULES = [
+  { prefix: "re", meaning: "再次/回" },
+  { prefix: "un", meaning: "否定/反向" },
+  { prefix: "de", meaning: "去除/向下" },
+  { prefix: "dis", meaning: "分离/否定" },
+  { prefix: "pre", meaning: "预先" },
+  { prefix: "post", meaning: "之后" },
+  { prefix: "trans", meaning: "跨越/转移" },
+  { prefix: "inter", meaning: "在...之间" },
+  { prefix: "auto", meaning: "自动" },
+  { prefix: "multi", meaning: "多" },
+  { prefix: "sub", meaning: "下/子" },
+  { prefix: "super", meaning: "超/上" },
+  { prefix: "over", meaning: "过度/在上" }
+];
+
+const ROOT_SUFFIX_RULES = [
+  { suffix: "ation", meaning: "行为/结果" },
+  { suffix: "ition", meaning: "行为/结果" },
+  { suffix: "tion", meaning: "行为/结果" },
+  { suffix: "sion", meaning: "行为/状态" },
+  { suffix: "ment", meaning: "结果/状态" },
+  { suffix: "ness", meaning: "性质/状态" },
+  { suffix: "able", meaning: "可...的" },
+  { suffix: "ible", meaning: "可...的" },
+  { suffix: "ality", meaning: "性质" },
+  { suffix: "ivity", meaning: "性质/活动" },
+  { suffix: "ization", meaning: "化/过程" },
+  { suffix: "ising", meaning: "过程" },
+  { suffix: "ing", meaning: "过程/进行中" },
+  { suffix: "er", meaning: "执行者/工具" },
+  { suffix: "or", meaning: "执行者/工具" },
+  { suffix: "ist", meaning: "从事者" },
+  { suffix: "ity", meaning: "性质" },
+  { suffix: "ive", meaning: "具有...性质" }
+];
+
 const ONLINE_LOOKUP_DELAY_MIN_MS = 800;
 const ONLINE_LOOKUP_DELAY_MAX_MS = 2200;
 const USE_ONLINE_MODEL_STORAGE_KEY = "en-split-use-online-model";
@@ -41,6 +78,8 @@ let ipaDictionary = {}
 let meaningDictionary = {}
 
 let phraseMeaningDictionary = {}
+
+let rootMemoryDictionary = {}
 
 const onlineMeaningCache = new Map();
 let dictionariesReady = false;
@@ -164,7 +203,7 @@ trimKnownWordsButton.addEventListener("click", async () => {
   await ensureKnownWordsLoaded();
   const knownWordSet = getKnownWordSet();
   if (knownWordSet.size === 0) {
-    summary.textContent = "请先填写已认识单词。";
+    summary.textContent = "请先填写已忽略单词。";
     return;
   }
 
@@ -247,7 +286,8 @@ function extractVocabulary(text, options) {
       word,
       count,
       ipa: getIpa(word),
-      meaning: getMeaning(word, wordContexts.get(word) || [], "word")
+      meaning: getMeaning(word, wordContexts.get(word) || [], "word"),
+      memory: getRootMemory(word)
     }));
 
   const phrases = options.includePhraseExtraction
@@ -302,15 +342,17 @@ async function loadDictionaries() {
     }
 
     const manifest = await manifestResponse.json();
-    const [ipaData, meaningData, phraseData] = await Promise.all([
+    const [ipaData, meaningData, phraseData, rootMemoryData] = await Promise.all([
       fetchMergedDictionary(manifest.dictionaries.ipaDictionary),
       fetchMergedDictionary(manifest.dictionaries.meaningDictionary),
-      fetchMergedDictionary(manifest.dictionaries.phraseMeaningDictionary)
+      fetchMergedDictionary(manifest.dictionaries.phraseMeaningDictionary),
+      fetchMergedDictionary(manifest.dictionaries.rootMemoryDictionary)
     ]);
 
     ipaDictionary = ipaData;
     meaningDictionary = meaningData;
     phraseMeaningDictionary = phraseData;
+    rootMemoryDictionary = rootMemoryData;
   } catch (error) {
     dictionaryLoadPromise = null;
     if (location.protocol === "file:") {
@@ -481,7 +523,8 @@ function buildResultRows(extraction) {
     term: item.word,
     count: item.count,
     ipa: item.ipa,
-    meaning: item.meaning
+    meaning: item.meaning,
+    memory: item.memory
   }));
 
   const phraseRows = extraction.phrases.map((item) => ({
@@ -489,7 +532,8 @@ function buildResultRows(extraction) {
     term: item.phrase,
     count: item.count,
     ipa: item.ipa,
-    meaning: item.meaning
+    meaning: item.meaning,
+    memory: ""
   }));
 
   return [...wordRows, ...phraseRows]
@@ -524,7 +568,7 @@ function buildTsvReport(rows) {
     return "";
   }
 
-  const header = ["序号", "类型", "内容", "次数", "音标", "释义"];
+  const header = ["序号", "类型", "内容", "次数", "音标", "释义", "词根记忆"];
   const lines = [header.join("\t")];
 
   rows.forEach((row) => {
@@ -534,7 +578,8 @@ function buildTsvReport(rows) {
       sanitizeTsvCell(row.term),
       row.count,
       sanitizeTsvCell(row.ipa),
-      sanitizeTsvCell(row.meaning)
+      sanitizeTsvCell(row.meaning),
+      sanitizeTsvCell(row.memory)
     ].join("\t"));
   });
 
@@ -564,7 +609,7 @@ function renderResultTable(rows) {
     if (row.meaning === "待补充释义") {
       tr.className = "result-row-missing";
     }
-    [row.index, row.type, row.term, row.count, row.ipa, row.meaning].forEach((value) => {
+    [row.index, row.type, row.term, row.count, row.ipa, row.meaning, row.memory].forEach((value) => {
       const td = document.createElement("td");
       td.textContent = value;
       tr.appendChild(td);
@@ -699,6 +744,81 @@ function getCompoundMeaning(term, contexts) {
   }
 
   return partMeanings.join("");
+}
+
+function getRootMemory(word) {
+  const normalizedWord = String(word || "").toLowerCase();
+  if (!normalizedWord) {
+    return "";
+  }
+
+  if (rootMemoryDictionary[normalizedWord]) {
+    return rootMemoryDictionary[normalizedWord];
+  }
+
+  const lemma = lemmatizeWord(normalizedWord);
+  if (lemma !== normalizedWord && rootMemoryDictionary[lemma]) {
+    return rootMemoryDictionary[lemma];
+  }
+
+  return guessRootMemory(normalizedWord);
+}
+
+function guessRootMemory(word) {
+  const prefixMatch = ROOT_PREFIX_RULES.find((rule) => word.startsWith(rule.prefix) && word.length > rule.prefix.length + 3);
+  const suffixMatch = ROOT_SUFFIX_RULES.find((rule) => word.endsWith(rule.suffix) && word.length > rule.suffix.length + 3);
+
+  if (!prefixMatch && !suffixMatch) {
+    return "";
+  }
+
+  let stem = word;
+  const parts = [];
+
+  if (prefixMatch) {
+    stem = stem.slice(prefixMatch.prefix.length);
+    parts.push(`${prefixMatch.prefix}(${prefixMatch.meaning})`);
+  }
+
+  if (suffixMatch) {
+    stem = stem.slice(0, -suffixMatch.suffix.length);
+  }
+
+  stem = normalizeRootStem(stem);
+  if (stem.length < 3) {
+    return "";
+  }
+
+  parts.push(stem);
+
+  if (suffixMatch) {
+    parts.push(`${suffixMatch.suffix}(${suffixMatch.meaning})`);
+  }
+
+  if (parts.length < 2) {
+    return "";
+  }
+
+  const gloss = [
+    prefixMatch?.meaning,
+    suffixMatch?.meaning
+  ].filter(Boolean).join(" + ");
+
+  return gloss
+    ? `${parts.join(" + ")} => ${gloss}`
+    : parts.join(" + ");
+}
+
+function normalizeRootStem(stem) {
+  if (/([b-df-hj-np-tv-z])\1$/.test(stem)) {
+    return stem.slice(0, -1);
+  }
+
+  if (stem.endsWith("i") && stem.length > 3) {
+    return `${stem.slice(0, -1)}y`;
+  }
+
+  return stem;
 }
 
 function lemmatizePhrase(phrase) {

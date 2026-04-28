@@ -10,7 +10,7 @@ The app is intentionally simple:
 - `styles.css`: UI styling
 - `app.js`: browser logic, extraction, layered dictionary lookup, online lookup/cache behavior
 - `server.js`: static file server plus lookup-cache write API
-- `ignore.txt`: manually editable known-words file, auto-loaded on refresh
+- `ignore.txt`: manually editable ignored-words file, auto-loaded on refresh
 - `data/*.json`: layered offline IPA/meaning/phrase dictionaries plus online lookup cache
 - `scripts/test-cache-flow.js`: integration-style test for cache, online switch, and trimming behavior
 - `scripts/enrich-delivery-ad-dictionaries.js`: repeatable dictionary enrichment script
@@ -52,7 +52,7 @@ The test starts `server.js`, writes a temporary cache payload, loads `app.js` in
 - enabling "use online model" allows cache reuse and online translation
 - disabling the switch prevents online translation
 - if an online translation returns the original English term unchanged, it is treated as "not found"
-- `ignore.txt` is auto-loaded into known words
+- `ignore.txt` is auto-loaded into the ignored words field
 - known-word filtering and trimming work
 
 The test restores `data/catch.json` and `ignore.txt` after it runs.
@@ -64,9 +64,11 @@ The offline dictionaries are plain JSON objects:
 - `data/base-ipa-dictionary.json`: 基础开源/通用 IPA 层
 - `data/base-meaning-dictionary.json`: 基础开源/通用释义层
 - `data/base-phrase-meaning-dictionary.json`: 基础通用短语层
+- `data/base-root-memory-dictionary.json`: 基础通用词根记忆层
 - `data/ipa-dictionary.json`: `"word": "/ipa/"`
 - `data/meaning-dictionary.json`: `"word": "Chinese meaning"` or context-aware arrays
 - `data/phrase-meaning-dictionary.json`: `"2-3 word phrase": "Chinese meaning"`
+- `data/root-memory-dictionary.json`: `"word": "词根记忆提示"`
 
 Keep JSON valid and UTF-8 encoded. Prefer lowercase keys because extraction normalizes input to lowercase.
 
@@ -167,23 +169,23 @@ When it is on:
 
 Do not make online lookup mandatory for basic extraction.
 
-## Known Words / Trimming
+## Ignored Words / Trimming
 
-The "known words" textarea accepts words separated by spaces, commas, or newlines. The app normalizes and lemmatizes these words.
+The "ignored words" textarea accepts words separated by spaces, commas, or newlines. The app normalizes and lemmatizes these words.
 
-Known words also support a file-backed workflow:
+Ignored words also support a file-backed workflow:
 
 - `ignore.txt` can be edited manually in the project root
 - refreshing the page auto-loads `ignore.txt`
 - the file-backed value is intended to seed/replace the textarea on refresh
 - server responses for `ignore.txt` use no-store caching so browser refresh picks up edits
 
-Known words are used in two places:
+Ignored words are used in two places:
 
 - during extraction, matching words are excluded from the word list
-- the "trim known words" button removes matching words from the current result
+- the "trim ignored words" button removes matching words from the current result
 
-For phrases, the current behavior removes a phrase only when all words in the phrase are known. This preserves useful mixed phrases that contain at least one unknown word.
+For phrases, the current behavior removes a phrase only when all words in the phrase are ignored. This preserves useful mixed phrases that contain at least one still-useful word.
 
 Hyphenated terms such as `real-time`, `cross-platform`, and `third-party` should continue to resolve through phrase/base dictionary fallback rather than being treated as unsupported tokens.
 
@@ -191,11 +193,13 @@ Hyphenated terms such as `real-time`, `cross-platform`, and `third-party` should
 
 The result area is rendered as a table for direct Excel-friendly copying:
 
-- visible output columns: 序号 / 类型 / 内容 / 次数 / 音标 / 释义
+- visible output columns: 序号 / 类型 / 内容 / 次数 / 音标 / 释义 / 词根记忆
 - "复制结果" copies tab-separated values
 - "下载 TSV" exports tab-separated values
 - items with `待补充释义` are sorted to the top of the table
 - items with `待补充释义` are highlighted with a light red row background for quick scanning
+- the root-memory column is populated only for single words
+- root-memory lookup prefers exact offline dictionary hits, then falls back to lightweight prefix/suffix heuristics
 
 ## Editing Guidance
 
