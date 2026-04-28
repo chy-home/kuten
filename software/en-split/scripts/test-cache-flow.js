@@ -7,7 +7,7 @@ const { spawn } = require("node:child_process");
 
 const rootDir = path.resolve(__dirname, "..");
 const cachePath = path.join(rootDir, "data", "catch.json");
-const rememberPath = path.join(rootDir, "remember.txt");
+const rememberPath = path.join(rootDir, "ignore.txt");
 const appPath = path.join(rootDir, "app.js");
 const port = 18080;
 const baseUrl = `http://localhost:${port}`;
@@ -49,7 +49,7 @@ async function main() {
     appContext.document.elements.sourceText.value = "cacheword";
     await appContext.document.elements.extractButton.dispatch("click");
 
-    assert.match(appContext.document.elements.resultText.value, /cacheword .* 待补充释义/);
+    assert.match(appContext.document.elements.resultText.value, /单词\tcacheword\t1\t.*\t待补充释义/);
     assert.doesNotMatch(appContext.document.elements.summary.textContent, /复用缓存/);
     assert.equal(appContext.document.elements.translateButton.disabled, true);
     assert.equal(appContext.externalFetches.length, 0);
@@ -58,7 +58,7 @@ async function main() {
     await appContext.document.elements.useOnlineModel.dispatch("change");
     await appContext.document.elements.extractButton.dispatch("click");
 
-    assert.match(appContext.document.elements.resultText.value, /cacheword \/cache-word\/ 来自文件缓存/);
+    assert.match(appContext.document.elements.resultText.value, /单词\tcacheword\t1\t\/cache-word\/\t来自文件缓存/);
     assert.match(appContext.document.elements.summary.textContent, /复用缓存 1 条/);
     assert.equal(appContext.externalFetches.length, 0);
 
@@ -66,8 +66,16 @@ async function main() {
     await appContext.document.elements.extractButton.dispatch("click");
     await appContext.document.elements.translateButton.dispatch("click");
 
-    assert.match(appContext.document.elements.resultText.value, /freshword .* 在线翻译结果/);
+    assert.match(appContext.document.elements.resultText.value, /单词\tfreshword\t1\t.*\t在线翻译结果/);
     assert.ok(appContext.timeoutDelays.some((delay) => delay >= 800 && delay <= 2200));
+
+    appContext.nextExternalTranslation = "sameword";
+    appContext.document.elements.sourceText.value = "sameword";
+    await appContext.document.elements.extractButton.dispatch("click");
+    await appContext.document.elements.translateButton.dispatch("click");
+
+    assert.match(appContext.document.elements.resultText.value, /单词\tsameword\t1\t.*\t待补充释义/);
+    appContext.nextExternalTranslation = "在线翻译结果";
 
     const fetchCountBeforeOnlineDisabled = appContext.externalFetches.length;
     appContext.document.elements.useOnlineModel.checked = false;
@@ -85,9 +93,11 @@ async function main() {
     appContext.document.elements.sourceText.value = "knownword tasks unknownword unknownword knownword tasks";
     await appContext.document.elements.extractButton.dispatch("click");
 
-    assert.doesNotMatch(appContext.document.elements.resultText.value, /\bknownword\b/);
-    assert.doesNotMatch(appContext.document.elements.resultText.value, /\btasks\b/);
-    assert.match(appContext.document.elements.resultText.value, /\bunknownword\b/);
+    const knownWordsResultLines = appContext.document.elements.resultText.value.split("\n");
+    assert.equal(knownWordsResultLines.length, 2);
+    assert.match(appContext.document.elements.resultText.value, /单词\tunknownword\t2\t/);
+    assert.doesNotMatch(appContext.document.elements.resultText.value, /单词\tknownword\t/);
+    assert.doesNotMatch(appContext.document.elements.resultText.value, /单词\ttasks\t/);
 
     appContext.document.elements.knownWords.value = "";
     appContext.document.elements.sourceText.value = "freshword keepword keepword";
@@ -96,8 +106,8 @@ async function main() {
     appContext.document.elements.knownWords.value = "freshword";
     await appContext.document.elements.trimKnownWordsButton.dispatch("click");
 
-    assert.doesNotMatch(appContext.document.elements.resultText.value, /\bfreshword\b/);
-    assert.match(appContext.document.elements.resultText.value, /\bkeepword\b/);
+    assert.doesNotMatch(appContext.document.elements.resultText.value, /单词\tfreshword\t/);
+    assert.match(appContext.document.elements.resultText.value, /单词\tkeepword\t2\t/);
     assert.match(appContext.document.elements.summary.textContent, /已裁剪/);
 
     console.log("cache flow ok");
@@ -149,6 +159,7 @@ async function runAppInBrowserLikeContext() {
     window: {
       isSecureContext: true
     },
+    nextExternalTranslation: "在线翻译结果",
     document: {
       elements,
       getElementById(id) {
@@ -164,7 +175,7 @@ async function runAppInBrowserLikeContext() {
         externalFetches.push(resolvedUrl.href);
         return createJsonResponse({
           responseData: {
-            translatedText: "在线翻译结果"
+            translatedText: context.nextExternalTranslation
           }
         });
       }
@@ -180,11 +191,10 @@ async function runAppInBrowserLikeContext() {
   await Promise.resolve();
   await context.window.__appStartupReady;
 
-  return {
-    ...context,
+  return Object.assign(context, {
     externalFetches,
     timeoutDelays
-  };
+  });
 }
 
 async function readOptionalTextFile(filePath) {
@@ -217,6 +227,9 @@ function createElements() {
   return {
     sourceText: createElement("textarea", { value: "" }),
     resultText: createElement("textarea", { value: "" }),
+    resultTable: createElement("table", { hidden: true }),
+    resultTableBody: createElement("tbody"),
+    resultEmptyState: createElement("div", { textContent: "" }),
     summary: createElement("div", { textContent: "" }),
     txtFile: createElement("input", { value: "", files: [] }),
     extractButton: createElement("button"),
@@ -227,7 +240,7 @@ function createElements() {
     minWordLength: createElement("input", { value: "3" }),
     minPhraseFrequency: createElement("input", { value: "2" }),
     excludeStopwords: createElement("input", { checked: true }),
-    includePhrases: createElement("input", { checked: true }),
+    includePhrases: createElement("input", { checked: false }),
     useOnlineModel: createElement("input", { checked: true }),
     onlineProvider: createElement("select", { value: "combo" }),
     translationEndpoint: createElement("input", { value: "" }),
@@ -261,18 +274,23 @@ function createJsonResponse(data, ok = true) {
 
 function createElement(tagName, initialValues = {}) {
   const listeners = new Map();
-  return {
+  const element = {
     tagName,
     value: "",
     textContent: "",
+    hidden: false,
     checked: false,
     files: [],
     href: "",
     download: "",
     placeholder: "",
-    ...initialValues,
+    children: [],
     addEventListener(eventName, listener) {
       listeners.set(eventName, listener);
+    },
+    appendChild(child) {
+      this.children.push(child);
+      return child;
     },
     async dispatch(eventName) {
       const listener = listeners.get(eventName);
@@ -284,6 +302,17 @@ function createElement(tagName, initialValues = {}) {
     focus() {},
     select() {}
   };
+
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return "";
+    },
+    set() {
+      this.children = [];
+    }
+  });
+
+  return Object.assign(element, initialValues);
 }
 
 function postJson(pathname, data) {

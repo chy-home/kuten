@@ -1,5 +1,8 @@
 const sourceText = document.getElementById("sourceText");
 const resultText = document.getElementById("resultText");
+const resultTable = document.getElementById("resultTable");
+const resultTableBody = document.getElementById("resultTableBody");
+const resultEmptyState = document.getElementById("resultEmptyState");
 const summary = document.getElementById("summary");
 const txtFile = document.getElementById("txtFile");
 const extractButton = document.getElementById("extractButton");
@@ -17,6 +20,7 @@ const translationEndpoint = document.getElementById("translationEndpoint");
 const translationApiKey = document.getElementById("translationApiKey");
 const knownWords = document.getElementById("knownWords");
 const trimKnownWordsButton = document.getElementById("trimKnownWordsButton");
+const DEFAULT_RESULT_EMPTY_TEXT = "点击“分词”后，这里会生成可直接复制到 Excel 的表格结果。";
 
 const stopwords = new Set([
   "a", "an", "and", "are", "as", "at", "be", "been", "being", "but", "by", "for", "from",
@@ -30,7 +34,7 @@ const ONLINE_LOOKUP_DELAY_MIN_MS = 800;
 const ONLINE_LOOKUP_DELAY_MAX_MS = 2200;
 const USE_ONLINE_MODEL_STORAGE_KEY = "en-split-use-online-model";
 const KNOWN_WORDS_STORAGE_KEY = "en-split-known-words";
-const KNOWN_WORDS_FILE_PATH = "./remember.txt";
+const KNOWN_WORDS_FILE_PATH = "./ignore.txt";
 
 let ipaDictionary = {}
 
@@ -80,7 +84,7 @@ extractButton.addEventListener("click", async () => {
   const text = sourceText.value.trim();
   if (!text) {
     summary.textContent = "请输入文本或先上传 TXT 文件。";
-    resultText.value = "";
+    resetResultView();
     currentExtraction = null;
     return;
   }
@@ -92,7 +96,7 @@ extractButton.addEventListener("click", async () => {
     await ensureDictionariesLoaded();
   } catch (error) {
     summary.textContent = error.message || "离线词典加载失败。";
-    resultText.value = "";
+    resetResultView();
     return;
   }
 
@@ -120,7 +124,7 @@ extractButton.addEventListener("click", async () => {
   }
 
   currentExtraction = extraction;
-  resultText.value = buildReport(extraction);
+  updateResultView(extraction);
   summary.textContent = buildSummaryText(extraction);
 });
 
@@ -144,7 +148,7 @@ translateButton.addEventListener("click", async () => {
       apiKey: translationApiKey.value.trim()
     });
     currentExtraction.cacheStats = cacheStats;
-    resultText.value = buildReport(currentExtraction);
+    updateResultView(currentExtraction);
     summary.textContent = buildSummaryText(currentExtraction);
   } catch (error) {
     summary.textContent = error.message || "在线翻译失败。";
@@ -165,13 +169,13 @@ trimKnownWordsButton.addEventListener("click", async () => {
   }
 
   const trimStats = trimKnownWordsFromExtraction(currentExtraction, knownWordSet);
-  resultText.value = buildReport(currentExtraction);
+  updateResultView(currentExtraction);
   summary.textContent = `${buildSummaryText(currentExtraction)} 已裁剪 ${trimStats.words} 个单词，${trimStats.phrases} 个短语。`;
 });
 
 clearButton.addEventListener("click", () => {
   sourceText.value = "";
-  resultText.value = "";
+  resetResultView();
   txtFile.value = "";
   currentExtraction = null;
   summary.textContent = "已清空";
@@ -203,14 +207,14 @@ downloadButton.addEventListener("click", () => {
     return;
   }
 
-  const blob = new Blob([resultText.value], { type: "text/plain;charset=utf-8" });
+  const blob = new Blob([resultText.value], { type: "text/tab-separated-values;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = "extracted-vocabulary.txt";
+  anchor.download = "extracted-vocabulary.tsv";
   anchor.click();
   URL.revokeObjectURL(url);
-  summary.textContent = "已下载 TXT 结果。";
+  summary.textContent = "已下载 TSV 结果。";
 });
 
 function extractVocabulary(text, options) {
@@ -342,7 +346,7 @@ async function loadKnownWordsFromFile() {
         knownWordsReady = true;
         return;
       }
-      throw new Error("remember.txt 加载失败。");
+      throw new Error("ignore.txt 加载失败。");
     }
 
     applyKnownWordsText(await response.text());
@@ -451,32 +455,125 @@ function trimKnownWordsFromExtraction(extraction, knownWordSet) {
   };
 }
 
-function buildReport(extraction) {
-  const lines = [];
-  lines.push("英文单词与短语提取结果");
-  lines.push(`生成时间: ${new Date().toLocaleString()}`);
-  lines.push("");
+function updateResultView(extraction) {
+  const rows = buildResultRows(extraction);
+  resultText.value = buildTsvReport(rows);
+  renderResultTable(rows);
+}
 
-  lines.push("[单词]");
-  if (extraction.words.length === 0) {
-    lines.push("无");
-  } else {
-    extraction.words.forEach((item, index) => {
-      lines.push(`${index + 1}. ${item.word} ${item.ipa} ${item.meaning}`);
-    });
+function resetResultView() {
+  resultText.value = "";
+  if (resultTableBody) {
+    resultTableBody.innerHTML = "";
+  }
+  if (resultTable) {
+    resultTable.hidden = true;
+  }
+  if (resultEmptyState) {
+    resultEmptyState.textContent = DEFAULT_RESULT_EMPTY_TEXT;
+    resultEmptyState.hidden = false;
+  }
+}
+
+function buildResultRows(extraction) {
+  const wordRows = extraction.words.map((item) => ({
+    type: "单词",
+    term: item.word,
+    count: item.count,
+    ipa: item.ipa,
+    meaning: item.meaning
+  }));
+
+  const phraseRows = extraction.phrases.map((item) => ({
+    type: "短语",
+    term: item.phrase,
+    count: item.count,
+    ipa: item.ipa,
+    meaning: item.meaning
+  }));
+
+  return [...wordRows, ...phraseRows]
+    .sort((left, right) => compareResultRows(left, right))
+    .map((row, index) => ({
+    index: index + 1,
+    ...row
+    }));
+}
+
+function compareResultRows(left, right) {
+  const leftMissing = left.meaning === "待补充释义" ? 0 : 1;
+  const rightMissing = right.meaning === "待补充释义" ? 0 : 1;
+
+  if (leftMissing !== rightMissing) {
+    return leftMissing - rightMissing;
   }
 
-  lines.push("");
-  lines.push("[短语]");
-  if (extraction.phrases.length === 0) {
-    lines.push("无");
-  } else {
-    extraction.phrases.forEach((item, index) => {
-      lines.push(`${index + 1}. ${item.phrase} ${item.ipa} ${item.meaning}`);
-    });
+  if (right.count !== left.count) {
+    return right.count - left.count;
   }
+
+  if (left.type !== right.type) {
+    return left.type.localeCompare(right.type, "zh-CN");
+  }
+
+  return left.term.localeCompare(right.term);
+}
+
+function buildTsvReport(rows) {
+  if (rows.length === 0) {
+    return "";
+  }
+
+  const header = ["序号", "类型", "内容", "次数", "音标", "释义"];
+  const lines = [header.join("\t")];
+
+  rows.forEach((row) => {
+    lines.push([
+      row.index,
+      sanitizeTsvCell(row.type),
+      sanitizeTsvCell(row.term),
+      row.count,
+      sanitizeTsvCell(row.ipa),
+      sanitizeTsvCell(row.meaning)
+    ].join("\t"));
+  });
 
   return lines.join("\n");
+}
+
+function sanitizeTsvCell(value) {
+  return String(value ?? "").replace(/\t/g, " ").replace(/\r?\n/g, " ");
+}
+
+function renderResultTable(rows) {
+  if (!resultTableBody || !resultTable || !resultEmptyState) {
+    return;
+  }
+
+  resultTableBody.innerHTML = "";
+
+  if (rows.length === 0) {
+    resultTable.hidden = true;
+    resultEmptyState.hidden = false;
+    resultEmptyState.textContent = "当前没有提取到可展示的数据。";
+    return;
+  }
+
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    if (row.meaning === "待补充释义") {
+      tr.className = "result-row-missing";
+    }
+    [row.index, row.type, row.term, row.count, row.ipa, row.meaning].forEach((value) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    resultTableBody.appendChild(tr);
+  });
+
+  resultTable.hidden = false;
+  resultEmptyState.hidden = true;
 }
 
 function buildSummaryText(extraction) {
@@ -749,9 +846,16 @@ async function enrichMeaningsOnline(extraction, options) {
     const term = item.type === "word" ? item.word : item.phrase;
     const cacheKey = buildLookupCacheKey(options.provider, term, options.translationEndpoint);
     if (onlineMeaningCache.has(cacheKey)) {
-      applyOnlineResult(item, onlineMeaningCache.get(cacheKey));
-      stats.hits += 1;
-      continue;
+      const cachedResult = onlineMeaningCache.get(cacheKey);
+      if (hasUsableOnlineResult(cachedResult, term)) {
+        applyOnlineResult(item, cachedResult);
+        stats.hits += 1;
+        continue;
+      }
+
+      if (cachedResult === null) {
+        continue;
+      }
     }
 
     try {
@@ -779,7 +883,7 @@ function applyOnlineResult(item, result) {
     return;
   }
 
-  if (result.meaning) {
+  if (result.meaning && !isSameMeaningAsTerm(result.meaning, item.type === "word" ? item.word : item.phrase)) {
     item.meaning = result.meaning;
   }
 
@@ -860,7 +964,7 @@ async function lookupViaDictionaryApi(term) {
 async function lookupViaTranslation(term, options) {
   const translated = await translateText(term, options);
   return translated
-    ? { meaning: translated }
+    ? buildOnlineMeaningResult(term, translated)
     : null;
 }
 
@@ -903,12 +1007,12 @@ async function translateText(text, options) {
 
 async function lookupViaMyMemory(term) {
   const translated = await translateViaMyMemory(term);
-  return translated ? { meaning: translated } : null;
+  return translated ? buildOnlineMeaningResult(term, translated) : null;
 }
 
 async function lookupViaGoogle(term, options) {
   const translated = await translateViaGoogle(term, options);
-  return translated ? { meaning: translated } : null;
+  return translated ? buildOnlineMeaningResult(term, translated) : null;
 }
 
 async function translateViaMyMemory(text) {
@@ -975,7 +1079,7 @@ function applyLookupCacheToExtraction(extraction, options) {
 
   for (const item of extraction.words) {
     const result = findLookupCacheResult(item.word, "word", options);
-    if (result) {
+    if (hasUsableOnlineResult(result, item.word)) {
       applyOnlineResult(attachType(item, "word"), result);
       hits += 1;
     }
@@ -983,7 +1087,7 @@ function applyLookupCacheToExtraction(extraction, options) {
 
   for (const item of extraction.phrases) {
     const result = findLookupCacheResult(item.phrase, "phrase", options);
-    if (result) {
+    if (hasUsableOnlineResult(result, item.phrase)) {
       applyOnlineResult(attachType(item, "phrase"), result);
       hits += 1;
     }
@@ -1040,11 +1144,10 @@ function parseLookupCacheKey(key) {
 function buildLookupCachePayload() {
   const items = {};
   for (const [key, value] of onlineMeaningCache) {
-    if (!value || typeof value !== "object") {
-      continue;
-    }
+    const cacheEntry = parseLookupCacheKey(key);
+    const cacheTerm = cacheEntry?.term || "";
 
-    if (!value.ipa && !value.meaning) {
+    if (!hasUsableOnlineResult(value, cacheTerm)) {
       continue;
     }
 
@@ -1116,7 +1219,8 @@ function importLookupCache(payload) {
       continue;
     }
 
-    onlineMeaningCache.set(key, normalizeLookupCacheValue(value));
+    const cacheEntry = parseLookupCacheKey(key);
+    onlineMeaningCache.set(key, normalizeLookupCacheValue(value, cacheEntry?.term || ""));
     importedCount += 1;
   }
 
@@ -1139,15 +1243,58 @@ function normalizeLookupCacheEntries(payload) {
   return Object.entries(payload);
 }
 
-function normalizeLookupCacheValue(value) {
+function normalizeLookupCacheValue(value, term = "") {
   if (!value || typeof value !== "object") {
     return null;
   }
 
-  return {
+  const normalizedValue = {
     ipa: typeof value.ipa === "string" ? value.ipa : "",
     meaning: typeof value.meaning === "string" ? value.meaning : ""
   };
+
+  if (!hasUsableOnlineResult(normalizedValue, term)) {
+    return null;
+  }
+
+  if (normalizedValue.meaning && isSameMeaningAsTerm(normalizedValue.meaning, term)) {
+    normalizedValue.meaning = "";
+  }
+
+  return normalizedValue;
+}
+
+function buildOnlineMeaningResult(term, meaning) {
+  const normalizedMeaning = String(meaning || "").trim();
+  if (!normalizedMeaning || isSameMeaningAsTerm(normalizedMeaning, term)) {
+    return null;
+  }
+
+  return { meaning: normalizedMeaning };
+}
+
+function isSameMeaningAsTerm(meaning, term) {
+  return normalizeComparableText(meaning) === normalizeComparableText(term);
+}
+
+function hasUsableMeaning(result, term) {
+  return Boolean(result?.meaning) && !isSameMeaningAsTerm(result.meaning, term);
+}
+
+function hasUsableOnlineResult(result, term) {
+  if (!result || typeof result !== "object") {
+    return false;
+  }
+
+  return Boolean(result.ipa) || hasUsableMeaning(result, term);
+}
+
+function normalizeComparableText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[’']/g, "")
+    .replace(/[-_\s]+/g, " ")
+    .trim();
 }
 
 function restoreUserPreferences() {

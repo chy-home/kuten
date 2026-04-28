@@ -130,7 +130,7 @@ function normalizeCachePayload(payload) {
 }
 
 function shouldDisableCache(pathname) {
-  return pathname === "/data/catch.json" || pathname === "/remember.txt";
+  return pathname === "/data/catch.json" || pathname === "/ignore.txt";
 }
 
 function sendJson(response, statusCode, data) {

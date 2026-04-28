@@ -10,11 +10,13 @@ The app is intentionally simple:
 - `styles.css`: UI styling
 - `app.js`: browser logic, extraction, layered dictionary lookup, online lookup/cache behavior
 - `server.js`: static file server plus lookup-cache write API
-- `remember.txt`: manually editable known-words file, auto-loaded on refresh
+- `ignore.txt`: manually editable known-words file, auto-loaded on refresh
 - `data/*.json`: layered offline IPA/meaning/phrase dictionaries plus online lookup cache
 - `scripts/test-cache-flow.js`: integration-style test for cache, online switch, and trimming behavior
 - `scripts/enrich-delivery-ad-dictionaries.js`: repeatable dictionary enrichment script
 - `scripts/import-ecdict.js`: import `ECDICT` CSV into the base offline dictionary layer
+- `scripts/import-cmudict.js`: import `CMUdict` or IPA-tab pronunciation data into the base offline IPA layer
+- `scripts/import-phrase-dictionary.js`: import 2-3 word offline phrase meanings into the base phrase layer
 
 ## Run
 
@@ -49,10 +51,11 @@ The test starts `server.js`, writes a temporary cache payload, loads `app.js` in
 - default offline mode does not use online cache or external fetch
 - enabling "use online model" allows cache reuse and online translation
 - disabling the switch prevents online translation
-- `remember.txt` is auto-loaded into known words
+- if an online translation returns the original English term unchanged, it is treated as "not found"
+- `ignore.txt` is auto-loaded into known words
 - known-word filtering and trimming work
 
-The test restores `data/catch.json` and `remember.txt` after it runs.
+The test restores `data/catch.json` and `ignore.txt` after it runs.
 
 ## Offline Dictionary Rules
 
@@ -80,6 +83,8 @@ Because the base dictionaries are large generated files, prefer updating them th
 
 Phrase extraction currently generates only 2-word and 3-word phrases, so adding 4+ word phrase entries will not help unless extraction logic is changed.
 
+The phrase extraction checkbox is currently off by default. Phrase extraction only runs when the user explicitly enables it.
+
 For IT delivery and ads-domain updates, prefer adding entries through `scripts/enrich-delivery-ad-dictionaries.js`, then run it:
 
 ```bash
@@ -101,12 +106,42 @@ The repo includes:
 
 ```bash
 node scripts/import-ecdict.js /path/to/ecdict.csv
+node scripts/import-cmudict.js /path/to/cmudict.dict
+node scripts/import-phrase-dictionary.js /path/to/phrases.tsv
 ```
 
 `import-ecdict.js` rewrites:
 
 - `data/base-ipa-dictionary.json`
 - `data/base-meaning-dictionary.json`
+
+`import-cmudict.js` writes into the IPA base layer and by default merges with the existing base dictionary:
+
+- default target: `data/base-ipa-dictionary.json`
+- supported input formats:
+  - original `CMUdict` ARPABET lines such as `HELLO  HH AH0 L OW1`
+  - `word<TAB>/ipa/` or `word<TAB>ipa` fallback files
+
+Examples:
+
+```bash
+node scripts/import-cmudict.js /path/to/cmudict.dict
+node scripts/import-cmudict.js /path/to/pronunciations.txt --format ipa-tab --prefer cmu
+```
+
+`import-phrase-dictionary.js` writes into the base phrase layer and only keeps 2-word or 3-word lowercase-normalizable phrases:
+
+- default target: `data/base-phrase-meaning-dictionary.json`
+- supported input formats:
+  - `phrase<TAB>Chinese meaning`
+  - JSONL such as `{"phrase":"data pipeline","meaning":"数据管道"}`
+
+Examples:
+
+```bash
+node scripts/import-phrase-dictionary.js /path/to/phrases.tsv
+node scripts/import-phrase-dictionary.js /path/to/phrases.jsonl --format jsonl --prefer input
+```
 
 It should be treated as a generator step for the base layer, not as a merge into the domain override layer.
 
@@ -128,6 +163,7 @@ When it is on:
 - extraction may reuse cached online lookup results from `data/catch.json`
 - clicking "translate" can call the selected online provider
 - successful online results can be written back through `POST /api/lookup-cache`
+- if an online provider returns the original English word or phrase unchanged, treat that as "not found", keep `待补充释义`, and do not count it as a usable cached translation
 
 Do not make online lookup mandatory for basic extraction.
 
@@ -137,10 +173,10 @@ The "known words" textarea accepts words separated by spaces, commas, or newline
 
 Known words also support a file-backed workflow:
 
-- `remember.txt` can be edited manually in the project root
-- refreshing the page auto-loads `remember.txt`
+- `ignore.txt` can be edited manually in the project root
+- refreshing the page auto-loads `ignore.txt`
 - the file-backed value is intended to seed/replace the textarea on refresh
-- server responses for `remember.txt` use no-store caching so browser refresh picks up edits
+- server responses for `ignore.txt` use no-store caching so browser refresh picks up edits
 
 Known words are used in two places:
 
@@ -151,6 +187,16 @@ For phrases, the current behavior removes a phrase only when all words in the ph
 
 Hyphenated terms such as `real-time`, `cross-platform`, and `third-party` should continue to resolve through phrase/base dictionary fallback rather than being treated as unsupported tokens.
 
+## Result Presentation
+
+The result area is rendered as a table for direct Excel-friendly copying:
+
+- visible output columns: 序号 / 类型 / 内容 / 次数 / 音标 / 释义
+- "复制结果" copies tab-separated values
+- "下载 TSV" exports tab-separated values
+- items with `待补充释义` are sorted to the top of the table
+- items with `待补充释义` are highlighted with a light red row background for quick scanning
+
 ## Editing Guidance
 
 - Keep the app dependency-free unless there is a strong reason.
@@ -159,7 +205,7 @@ Hyphenated terms such as `real-time`, `cross-platform`, and `third-party` should
 - Keep UI labels in Chinese.
 - Keep extraction behavior deterministic when online mode is off.
 - Do not remove user cache data from `data/catch.json` except in tests that restore it.
-- Do not remove or overwrite user-maintained `remember.txt` content except in tests that restore it.
+- Do not remove or overwrite user-maintained `ignore.txt` content except in tests that restore it.
 - If dictionary output quality needs improvement, prefer cleaning or filtering import scripts instead of manually patching thousands of generated base entries.
 - Expect larger offline dictionary files to increase browser startup/load cost; avoid unnecessary duplicate loads.
 - If server binding fails in the sandbox with `EPERM`, rerun tests with the required approval rather than changing the server.

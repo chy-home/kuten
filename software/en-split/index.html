@@ -12,7 +12,7 @@
       <p class="eyebrow">Intranet Ready</p>
       <h1>英文单词与短语提取器</h1>
       <p class="subtitle">
-        支持上传 <code>.txt</code> 会议记录，或直接粘贴文本。先分词生成词汇与短语清单，再按需在线补充释义。
+        支持上传 <code>.txt</code> 会议记录，或直接粘贴文本。先分词生成词汇清单，再按需启用短语提取和在线补充释义。
       </p>
     </section>
 
@@ -47,7 +47,7 @@
         </label>
 
         <label class="checkbox">
-          <input id="includePhrases" type="checkbox" checked>
+          <input id="includePhrases" type="checkbox">
           <span>提取短语</span>
         </label>
 
@@ -105,7 +105,7 @@
         <div class="result-actions">
           <button id="trimKnownWordsButton" class="ghost">裁剪已认识单词</button>
           <button id="copyButton" class="ghost">复制结果</button>
-          <button id="downloadButton" class="ghost">下载 TXT</button>
+          <button id="downloadButton" class="ghost">下载 TSV</button>
         </div>
       </div>
 
@@ -113,7 +113,7 @@
         <span>已认识单词</span>
         <textarea
           id="knownWords"
-          placeholder="输入已认识的单词，可用空格、逗号或换行分隔。分词时会自动排除，也可对当前结果执行裁剪；刷新时会自动载入 remember.txt。"
+          placeholder="输入已认识的单词，可用空格、逗号或换行分隔。分词时会自动排除，也可对当前结果执行裁剪；刷新时会自动载入 ignore.txt。"
         ></textarea>
       </label>
 
@@ -121,23 +121,53 @@
         尚未提取
       </div>
 
+      <div class="table-shell">
+        <div id="resultEmptyState" class="result-empty">
+          点击“分词”后，这里会生成可直接复制到 Excel 的表格结果。
+        </div>
+        <table id="resultTable" class="result-table" hidden>
+          <thead>
+            <tr>
+              <th>序号</th>
+              <th>类型</th>
+              <th>内容</th>
+              <th>次数</th>
+              <th>音标</th>
+              <th>释义</th>
+            </tr>
+          </thead>
+          <tbody id="resultTableBody"></tbody>
+        </table>
+      </div>
+
       <textarea
         id="resultText"
+        class="export-buffer"
         readonly
-        placeholder="点击“分词”后，这里会生成可直接复制的文本结果。"
+        aria-hidden="true"
+        tabindex="-1"
       ></textarea>
 
       <p class="hint">
         说明：音标采用“内置常见词词典 + 离线规则回退”生成。常见词更准确，生僻词和专有名词可能只提供近似读音。
       </p>
       <p class="hint">
-        在线补充说明：点击“翻译”后，仅会把离线未命中的单词或短语发送到所选在线服务，并在每次在线请求前做随机节流等待。`MyMemory` 可直接试用；`Google Cloud Translation API` 需要官方 API Key；`LibreTranslate` 公共站点通常也需要 API Key，内网部署时建议改成你自己的兼容服务地址。
+        分词说明：“提取短语”默认关闭；只提取单词时启动更快。需要 2-3 词短语时再勾选，短语最小重复次数由上方输入框控制。
+      </p>
+      <p class="hint">
+        表格复制说明：结果区按表格展示；点击“复制结果”会按 Excel 友好的制表符分列格式复制；点击“下载 TSV”可直接用 Excel 打开。
+      </p>
+      <p class="hint">
+        未找到说明：`待补充释义` 的项目会优先排在前面，并用浅红色整行标出，便于优先处理。
+      </p>
+      <p class="hint">
+        在线补充说明：点击“翻译”后，仅会把离线未命中的单词或短语发送到所选在线服务，并在每次在线请求前做随机节流等待。`MyMemory` 可直接试用；`Google Cloud Translation API` 需要官方 API Key；`LibreTranslate` 公共站点通常也需要 API Key，内网部署时建议改成你自己的兼容服务地址。如果在线返回值与原英文词或短语相同，会视为未找到，不会覆盖 `待补充释义`。
       </p>
       <p class="hint">
         缓存说明：在线查询结果会自动保存到 `data/catch.json`，刷新页面后会自动载入并优先复用。
       </p>
       <p class="hint">
-        已认识单词说明：项目根目录下的 `remember.txt` 支持手动编辑，刷新页面后会自动载入到“已认识单词”输入框。
+        已认识单词说明：项目根目录下的 `ignore.txt` 支持手动编辑，刷新页面后会自动载入到“已认识单词”输入框。
       </p>
       <p class="hint">
         词典已拆分为独立 JSON 文件。为确保浏览器能正常加载本地词典，建议通过静态文件服务访问，而不是直接以 `file://` 方式打开。

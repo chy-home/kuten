@@ -12,7 +12,7 @@
 - 尽量输出音标
 - 在线查询结果自动缓存到 `data/catch.json`
 - 一键复制结果
-- 一键下载结果为 `txt`
+- 一键下载结果为 `tsv`
 
 ## 使用方式
 
@@ -112,11 +112,28 @@ node scripts/test-cache-flow.js
 
 ```bash
 node scripts/import-ecdict.js /path/to/ecdict.csv
+node scripts/import-cmudict.js /path/to/cmudict.dict
+node scripts/import-phrase-dictionary.js /path/to/phrases.tsv
+```
+
+如果你的发音来源已经是 IPA 文本，也支持：
+
+```bash
+node scripts/import-cmudict.js /path/to/pronunciations.txt --format ipa-tab --prefer cmu
+```
+
+如果你还有批量短语释义，也支持导入基础短语层：
+
+```bash
+node scripts/import-phrase-dictionary.js /path/to/phrases.tsv
+node scripts/import-phrase-dictionary.js /path/to/phrases.jsonl --format jsonl --prefer input
 ```
 
 导入后可继续运行：
 
 ```bash
 node scripts/enrich-delivery-ad-dictionaries.js
+node scripts/test-import-cmudict.js
+node scripts/test-import-phrase-dictionary.js
 node scripts/test-cache-flow.js
 ```
