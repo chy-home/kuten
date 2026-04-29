@@ -36,11 +36,6 @@
           <input id="minWordLength" type="number" min="2" max="12" value="3">
         </label>
 
-        <label>
-          <span>短语最小重复次数</span>
-          <input id="minPhraseFrequency" type="number" min="1" max="10" value="2">
-        </label>
-
         <label class="checkbox">
           <input id="excludeStopwords" type="checkbox" checked>
           <span>过滤常见虚词</span>
@@ -96,6 +91,7 @@
         <button id="extractButton" class="primary">分词</button>
         <button id="translateButton" class="ghost">翻译</button>
         <button id="clearButton" class="ghost">清空</button>
+        <button id="resetTableViewButton" class="ghost" type="button">重置表格</button>
       </div>
     </section>
 
@@ -121,21 +117,19 @@
         尚未提取
       </div>
 
+      <div class="column-toolbar">
+        <p class="column-toolbar-hint">
+          点击表头可排序；拖拽表头可调整列位置；鼠标放到列头上会出现 `×` 可删除列。复制和下载都会按当前显示结果导出。
+        </p>
+      </div>
+
       <div class="table-shell">
         <div id="resultEmptyState" class="result-empty">
           点击“分词”后，这里会生成可直接复制到 Excel 的表格结果。
         </div>
         <table id="resultTable" class="result-table" hidden>
           <thead>
-            <tr>
-              <th>序号</th>
-              <th>类型</th>
-              <th>内容</th>
-              <th>次数</th>
-              <th>音标</th>
-              <th>释义</th>
-              <th>词根记忆</th>
-            </tr>
+            <tr id="resultTableHeadRow"></tr>
           </thead>
           <tbody id="resultTableBody"></tbody>
         </table>
@@ -153,13 +147,13 @@
         说明：音标采用“内置常见词词典 + 离线规则回退”生成。常见词更准确，生僻词和专有名词可能只提供近似读音。
       </p>
       <p class="hint">
-        分词说明：“提取短语”默认关闭；只提取单词时启动更快。需要 2-3 词短语时再勾选，短语最小重复次数由上方输入框控制。
+        分词说明：“提取短语”默认关闭；只提取单词时启动更快。短语提取基于离线短语词典命中，只有词典里已有的 2-3 词短语才会被识别。
       </p>
       <p class="hint">
         词根记忆说明：当前仅对单词展示“词根记忆”列，优先使用内置精确词条；未命中时再尝试轻量前后缀拆分提示。短语这一列默认留空。
       </p>
       <p class="hint">
-        表格复制说明：结果区按表格展示；点击“复制结果”会按 Excel 友好的制表符分列格式复制；点击“下载 TSV”可直接用 Excel 打开。
+        表格复制说明：结果区按表格展示；点击“复制结果”会按当前显示列顺序、列显隐和当前排序状态，以 Excel 友好的制表符分列格式复制；点击“下载 TSV”可直接用 Excel 打开。
       </p>
       <p class="hint">
         未找到说明：`待补充释义` 的项目会优先排在前面，并用浅红色整行标出，便于优先处理。

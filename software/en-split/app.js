@@ -2,6 +2,7 @@ const sourceText = document.getElementById("sourceText");
 const resultText = document.getElementById("resultText");
 const resultTable = document.getElementById("resultTable");
 const resultTableBody = document.getElementById("resultTableBody");
+const resultTableHeadRow = document.getElementById("resultTableHeadRow");
 const resultEmptyState = document.getElementById("resultEmptyState");
 const summary = document.getElementById("summary");
 const txtFile = document.getElementById("txtFile");
@@ -11,7 +12,6 @@ const clearButton = document.getElementById("clearButton");
 const copyButton = document.getElementById("copyButton");
 const downloadButton = document.getElementById("downloadButton");
 const minWordLength = document.getElementById("minWordLength");
-const minPhraseFrequency = document.getElementById("minPhraseFrequency");
 const excludeStopwords = document.getElementById("excludeStopwords");
 const includePhrases = document.getElementById("includePhrases");
 const useOnlineModel = document.getElementById("useOnlineModel");
@@ -20,7 +20,21 @@ const translationEndpoint = document.getElementById("translationEndpoint");
 const translationApiKey = document.getElementById("translationApiKey");
 const knownWords = document.getElementById("knownWords");
 const trimKnownWordsButton = document.getElementById("trimKnownWordsButton");
+const resetTableViewButton = document.getElementById("resetTableViewButton");
 const DEFAULT_RESULT_EMPTY_TEXT = "点击“分词”后，这里会生成可直接复制到 Excel 的表格结果。";
+const DEFAULT_NO_DATA_TEXT = "当前没有提取到可展示的数据。";
+
+const RESULT_COLUMNS = [
+  { key: "index", label: "序号", cellClassName: "cell-index", sortable: true, sortType: "number" },
+  { key: "type", label: "类型", cellClassName: "cell-type", sortable: true, sortType: "string" },
+  { key: "term", label: "内容", cellClassName: "cell-term", sortable: true, sortType: "string" },
+  { key: "ipa", label: "音标", cellClassName: "cell-ipa", sortable: true, sortType: "string" },
+  { key: "meaning", label: "释义", cellClassName: "cell-meaning", sortable: true, sortType: "meaning" },
+  { key: "memory", label: "词根记忆", cellClassName: "cell-memory", sortable: true, sortType: "string" },
+  { key: "count", label: "次数", cellClassName: "cell-count", sortable: true, sortType: "number" }
+];
+
+const DEFAULT_TABLE_SORT = { key: "", direction: "asc" };
 
 const stopwords = new Set([
   "a", "an", "and", "are", "as", "at", "be", "been", "being", "but", "by", "for", "from",
@@ -89,10 +103,14 @@ let lookupCacheLoadPromise = null;
 let knownWordsReady = false;
 let knownWordsLoadPromise = null;
 let currentExtraction = null;
+let currentResultRows = [];
+let tableViewState = createDefaultTableViewState();
+let draggingColumnKey = "";
 
 lookupCacheLoadPromise = loadLookupCacheFromFile();
 restoreUserPreferences();
 knownWordsLoadPromise = loadKnownWordsFromFile();
+initializeTableControls();
 syncOnlineControls();
 useOnlineModel.addEventListener("change", () => {
   persistUserPreferences();
@@ -141,7 +159,6 @@ extractButton.addEventListener("click", async () => {
 
   const extraction = extractVocabulary(text, {
     minLength: Number(minWordLength.value) || 3,
-    minPhraseHits: Number(minPhraseFrequency.value) || 2,
     excludeCommonWords: excludeStopwords.checked,
     includePhraseExtraction: includePhrases.checked,
     knownWords: getKnownWordSet()
@@ -291,7 +308,7 @@ function extractVocabulary(text, options) {
     }));
 
   const phrases = options.includePhraseExtraction
-    ? extractPhrases(normalizedText, options.minPhraseHits, knownWordSet)
+    ? extractPhrases(normalizedText, knownWordSet)
     : [];
 
   return { words, phrases };
@@ -405,7 +422,7 @@ function applyKnownWordsText(text) {
   persistUserPreferences();
 }
 
-function extractPhrases(text, minHits, knownWordSet = new Set()) {
+function extractPhrases(text, knownWordSet = new Set()) {
   const phraseCounts = new Map();
   const phraseContexts = new Map();
   const segments = text
@@ -418,7 +435,9 @@ function extractPhrases(text, minHits, knownWordSet = new Set()) {
     for (let size = 2; size <= 3; size += 1) {
       for (let index = 0; index <= segment.length - size; index += 1) {
         const slice = segment.slice(index, index + size);
-        if (!isUsefulPhrase(slice)) {
+        const phrase = slice.join(" ");
+        const normalizedPhrase = lemmatizePhrase(phrase);
+        if (!isDictionaryPhrase(phrase, normalizedPhrase)) {
           continue;
         }
 
@@ -426,7 +445,6 @@ function extractPhrases(text, minHits, knownWordSet = new Set()) {
           continue;
         }
 
-        const phrase = slice.join(" ");
         phraseCounts.set(phrase, (phraseCounts.get(phrase) || 0) + 1);
         pushContext(phraseContexts, phrase, collectContext(segment, index, size));
       }
@@ -434,7 +452,6 @@ function extractPhrases(text, minHits, knownWordSet = new Set()) {
   }
 
   return [...phraseCounts.entries()]
-    .filter(([, count]) => count >= minHits)
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .map(([phrase, count]) => ({
       phrase,
@@ -444,28 +461,11 @@ function extractPhrases(text, minHits, knownWordSet = new Set()) {
     }));
 }
 
-function isUsefulPhrase(words) {
-  if (words.some((word) => word.length < 2)) {
-    return false;
-  }
-
-  if (words.every((word) => stopwords.has(word))) {
-    return false;
-  }
-
-  if (stopwords.has(words[0]) || stopwords.has(words[words.length - 1])) {
-    return false;
-  }
-
-  if (words.some((word, index) => index > 0 && index < words.length - 1 && isConnectorWord(word))) {
-    return false;
-  }
-
-  return words.some((word) => word.length >= 4);
-}
-
-function isConnectorWord(word) {
-  return word === "and" || word === "or" || word === "with" || word === "for" || word === "to";
+function isDictionaryPhrase(phrase, normalizedPhrase = lemmatizePhrase(phrase)) {
+  return Boolean(
+    phraseMeaningDictionary[phrase] ||
+    (normalizedPhrase && normalizedPhrase !== phrase && phraseMeaningDictionary[normalizedPhrase])
+  );
 }
 
 function getKnownWordSet() {
@@ -498,15 +498,18 @@ function trimKnownWordsFromExtraction(extraction, knownWordSet) {
 }
 
 function updateResultView(extraction) {
-  const rows = buildResultRows(extraction);
-  resultText.value = buildTsvReport(rows);
-  renderResultTable(rows);
+  currentResultRows = buildResultRows(extraction);
+  renderCurrentResultView();
 }
 
 function resetResultView() {
+  currentResultRows = [];
   resultText.value = "";
   if (resultTableBody) {
     resultTableBody.innerHTML = "";
+  }
+  if (resultTableHeadRow) {
+    resultTableHeadRow.innerHTML = "";
   }
   if (resultTable) {
     resultTable.hidden = true;
@@ -539,8 +542,9 @@ function buildResultRows(extraction) {
   return [...wordRows, ...phraseRows]
     .sort((left, right) => compareResultRows(left, right))
     .map((row, index) => ({
-    index: index + 1,
-    ...row
+      sourceIndex: index + 1,
+      index: index + 1,
+      ...row
     }));
 }
 
@@ -563,24 +567,22 @@ function compareResultRows(left, right) {
   return left.term.localeCompare(right.term);
 }
 
-function buildTsvReport(rows) {
-  if (rows.length === 0) {
+function buildTsvReport(rows, columns = RESULT_COLUMNS) {
+  if (rows.length === 0 || columns.length === 0) {
     return "";
   }
 
-  const header = ["序号", "类型", "内容", "次数", "音标", "释义", "词根记忆"];
+  const header = columns.map((column) => column.label);
   const lines = [header.join("\t")];
 
   rows.forEach((row) => {
-    lines.push([
-      row.index,
-      sanitizeTsvCell(row.type),
-      sanitizeTsvCell(row.term),
-      row.count,
-      sanitizeTsvCell(row.ipa),
-      sanitizeTsvCell(row.meaning),
-      sanitizeTsvCell(row.memory)
-    ].join("\t"));
+    lines.push(columns.map((column) => {
+      const value = row[column.key];
+      if (typeof value === "number") {
+        return String(value);
+      }
+      return sanitizeTsvCell(value);
+    }).join("\t"));
   });
 
   return lines.join("\n");
@@ -590,17 +592,20 @@ function sanitizeTsvCell(value) {
   return String(value ?? "").replace(/\t/g, " ").replace(/\r?\n/g, " ");
 }
 
-function renderResultTable(rows) {
-  if (!resultTableBody || !resultTable || !resultEmptyState) {
+function renderResultTable(rows, columns) {
+  if (!resultTableBody || !resultTable || !resultEmptyState || !resultTableHeadRow) {
     return;
   }
 
+  renderResultTableHead(columns);
   resultTableBody.innerHTML = "";
 
-  if (rows.length === 0) {
+  if (rows.length === 0 || columns.length === 0) {
     resultTable.hidden = true;
     resultEmptyState.hidden = false;
-    resultEmptyState.textContent = "当前没有提取到可展示的数据。";
+    resultEmptyState.textContent = columns.length === 0
+      ? "当前列已全部隐藏，请至少显示一列。"
+      : DEFAULT_NO_DATA_TEXT;
     return;
   }
 
@@ -609,9 +614,12 @@ function renderResultTable(rows) {
     if (row.meaning === "待补充释义") {
       tr.className = "result-row-missing";
     }
-    [row.index, row.type, row.term, row.count, row.ipa, row.meaning, row.memory].forEach((value) => {
+    columns.forEach((column) => {
       const td = document.createElement("td");
-      td.textContent = value;
+      td.textContent = row[column.key];
+      if (column.cellClassName) {
+        td.className = column.cellClassName;
+      }
       tr.appendChild(td);
     });
     resultTableBody.appendChild(tr);
@@ -619,6 +627,260 @@ function renderResultTable(rows) {
 
   resultTable.hidden = false;
   resultEmptyState.hidden = true;
+}
+
+function createDefaultTableViewState() {
+  return {
+    columns: RESULT_COLUMNS.map((column) => ({
+      key: column.key,
+      visible: true
+    })),
+    sort: { ...DEFAULT_TABLE_SORT }
+  };
+}
+
+function initializeTableControls() {
+  if (resetTableViewButton) {
+    resetTableViewButton.addEventListener("click", () => {
+      tableViewState = createDefaultTableViewState();
+      renderCurrentResultView();
+    });
+  }
+}
+
+function renderCurrentResultView() {
+  const visibleColumns = getVisibleColumns();
+  const sortedRows = getSortedResultRows();
+  const displayRows = sortedRows.map((row, index) => ({
+    ...row,
+    index: index + 1
+  }));
+  resultText.value = buildTsvReport(displayRows, visibleColumns);
+  renderResultTable(displayRows, visibleColumns);
+}
+
+function getVisibleColumns() {
+  const metadataByKey = new Map(RESULT_COLUMNS.map((column) => [column.key, column]));
+  return tableViewState.columns
+    .filter((columnState) => columnState.visible && metadataByKey.has(columnState.key))
+    .map((columnState) => metadataByKey.get(columnState.key));
+}
+
+function getSortedResultRows() {
+  const rows = currentResultRows.slice();
+  if (rows.length <= 1) {
+    return rows;
+  }
+
+  const sortColumn = RESULT_COLUMNS.find((column) => column.key === tableViewState.sort.key);
+  if (!sortColumn || !tableViewState.sort.direction) {
+    return rows;
+  }
+
+  const direction = tableViewState.sort.direction === "desc" ? -1 : 1;
+  return rows.sort((left, right) => compareRowsByColumn(left, right, sortColumn) * direction);
+}
+
+function compareRowsByColumn(left, right, column) {
+  const valueKey = column.key === "index" ? "sourceIndex" : column.key;
+  const leftValue = left[valueKey];
+  const rightValue = right[valueKey];
+
+  if (column.sortType === "number") {
+    const leftNumber = Number(leftValue) || 0;
+    const rightNumber = Number(rightValue) || 0;
+    if (leftNumber !== rightNumber) {
+      return leftNumber - rightNumber;
+    }
+    return compareResultRows(left, right);
+  }
+
+  if (column.sortType === "meaning") {
+    const leftMissing = left.meaning === "待补充释义" ? 0 : 1;
+    const rightMissing = right.meaning === "待补充释义" ? 0 : 1;
+    if (leftMissing !== rightMissing) {
+      return leftMissing - rightMissing;
+    }
+  }
+
+  const textCompare = String(leftValue ?? "").localeCompare(String(rightValue ?? ""), "zh-CN");
+  if (textCompare !== 0) {
+    return textCompare;
+  }
+  return compareResultRows(left, right);
+}
+
+function renderResultTableHead(columns) {
+  if (!resultTableHeadRow) {
+    return;
+  }
+
+  resultTableHeadRow.innerHTML = "";
+  columns.forEach((column) => {
+    const th = document.createElement("th");
+    th.draggable = true;
+    th.dataset.columnKey = column.key;
+    th.className = "table-header-cell";
+    th.addEventListener("dragstart", (event) => {
+      draggingColumnKey = column.key;
+      th.classList.add("is-dragging");
+      if (event && event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", column.key);
+      }
+    });
+    th.addEventListener("dragover", (event) => {
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (event && event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+      if (draggingColumnKey && draggingColumnKey !== column.key) {
+        th.classList.add("is-drop-target");
+      }
+    });
+    th.addEventListener("dragleave", () => {
+      th.classList.remove("is-drop-target");
+    });
+    th.addEventListener("dragend", () => {
+      draggingColumnKey = "";
+      clearTableHeaderDragState();
+    });
+    th.addEventListener("drop", (event) => {
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      const sourceKey = draggingColumnKey || (event && event.dataTransfer
+        ? event.dataTransfer.getData("text/plain")
+        : "");
+      draggingColumnKey = "";
+      clearTableHeaderDragState();
+      moveColumnBefore(sourceKey, column.key);
+    });
+
+    const content = document.createElement("div");
+    content.className = "table-header-content";
+
+    const label = document.createElement("button");
+    label.type = "button";
+    label.className = "table-sort-button";
+    label.textContent = buildColumnHeaderLabel(column);
+    label.addEventListener("click", () => {
+      toggleColumnSort(column.key);
+    });
+
+    const deleteButton = createHeaderActionButton("×", "删除列", () => {
+      setColumnVisibility(column.key, false);
+    });
+    deleteButton.classList.add("table-delete-button");
+    deleteButton.disabled = getVisibleColumnKeys().length <= 1;
+
+    content.appendChild(label);
+    content.appendChild(deleteButton);
+    th.appendChild(content);
+    resultTableHeadRow.appendChild(th);
+  });
+}
+
+function buildColumnHeaderLabel(column) {
+  if (tableViewState.sort.key !== column.key) {
+    return `${column.label} ↕`;
+  }
+
+  return tableViewState.sort.direction === "desc"
+    ? `${column.label} ↓`
+    : `${column.label} ↑`;
+}
+
+function createHeaderActionButton(text, title, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "table-header-action-button";
+  button.textContent = text;
+  button.title = title;
+  button.addEventListener("click", (event) => {
+    if (event && typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
+    onClick();
+  });
+  return button;
+}
+
+function toggleColumnSort(columnKey) {
+  if (tableViewState.sort.key !== columnKey) {
+    tableViewState.sort = {
+      key: columnKey,
+      direction: "asc"
+    };
+  } else {
+    tableViewState.sort = {
+      key: columnKey,
+      direction: tableViewState.sort.direction === "asc" ? "desc" : "asc"
+    };
+  }
+
+  renderCurrentResultView();
+}
+
+function moveColumnBefore(sourceColumnKey, targetColumnKey) {
+  if (!sourceColumnKey || !targetColumnKey || sourceColumnKey === targetColumnKey) {
+    return;
+  }
+
+  const index = getColumnStateIndex(sourceColumnKey);
+  const targetIndex = getColumnStateIndex(targetColumnKey);
+  if (index < 0 || targetIndex < 0) {
+    return;
+  }
+
+  const [columnState] = tableViewState.columns.splice(index, 1);
+  const insertIndex = index < targetIndex ? targetIndex : targetIndex;
+  tableViewState.columns.splice(insertIndex, 0, columnState);
+  renderCurrentResultView();
+}
+
+function getColumnStateIndex(columnKey) {
+  return tableViewState.columns.findIndex((column) => column.key === columnKey);
+}
+
+function getVisibleColumnKeys() {
+  return tableViewState.columns
+    .filter((column) => column.visible)
+    .map((column) => column.key);
+}
+
+function setColumnVisibility(columnKey, visible) {
+  const columnState = tableViewState.columns.find((column) => column.key === columnKey);
+  if (!columnState) {
+    return;
+  }
+
+  const visibleCount = tableViewState.columns.filter((column) => column.visible).length;
+  if (!visible && visibleCount <= 1 && columnState.visible) {
+    return;
+  }
+
+  columnState.visible = visible;
+  renderCurrentResultView();
+}
+
+function clearTableHeaderDragState() {
+  if (!resultTableHeadRow || !resultTableHeadRow.children) {
+    return;
+  }
+
+  Array.from(resultTableHeadRow.children).forEach((headerCell) => {
+    if (headerCell.classList && typeof headerCell.classList.remove === "function") {
+      headerCell.classList.remove("is-dragging", "is-drop-target");
+    } else {
+      headerCell.className = String(headerCell.className || "")
+        .replace(/\bis-dragging\b/g, "")
+        .replace(/\bis-drop-target\b/g, "")
+        .trim();
+    }
+  });
 }
 
 function buildSummaryText(extraction) {

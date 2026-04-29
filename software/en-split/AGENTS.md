@@ -54,6 +54,8 @@ The test starts `server.js`, writes a temporary cache payload, loads `app.js` in
 - if an online translation returns the original English term unchanged, it is treated as "not found"
 - `ignore.txt` is auto-loaded into the ignored words field
 - known-word filtering and trimming work
+- phrase extraction is driven by the offline phrase dictionaries rather than simple repeat-count heuristics
+- result-table column delete/reorder/sort state is reflected in the current export buffer
 
 The test restores `data/catch.json` and `ignore.txt` after it runs.
 
@@ -83,7 +85,11 @@ Current repository state:
 
 Because the base dictionaries are large generated files, prefer updating them through import scripts rather than manual editing.
 
-Phrase extraction currently generates only 2-word and 3-word phrases, so adding 4+ word phrase entries will not help unless extraction logic is changed.
+Phrase extraction currently scans only 2-word and 3-word windows, so adding 4+ word phrase entries will not help unless extraction logic is changed.
+
+Phrase extraction is dictionary-driven. A 2-word or 3-word candidate is only recognized as a phrase when it matches the layered offline phrase dictionaries directly, or after lightweight phrase lemmatization.
+
+Phrase occurrence count is still recorded in the result table, but it no longer determines whether something counts as a phrase.
 
 The phrase extraction checkbox is currently off by default. Phrase extraction only runs when the user explicitly enables it.
 
@@ -193,9 +199,13 @@ Hyphenated terms such as `real-time`, `cross-platform`, and `third-party` should
 
 The result area is rendered as a table for direct Excel-friendly copying:
 
-- visible output columns: 序号 / 类型 / 内容 / 次数 / 音标 / 释义 / 词根记忆
-- "复制结果" copies tab-separated values
-- "下载 TSV" exports tab-separated values
+- default visible output columns: 序号 / 类型 / 内容 / 音标 / 释义 / 词根记忆 / 次数
+- clicking a table header sorts by that column
+- dragging a table header reorders columns
+- hovering a table header reveals a small delete control that hides that column
+- the `重置表格` button in the main action row restores the default column order and visibility
+- "复制结果" copies tab-separated values from the current visible table state
+- "下载 TSV" exports tab-separated values from the current visible table state
 - items with `待补充释义` are sorted to the top of the table
 - items with `待补充释义` are highlighted with a light red row background for quick scanning
 - the root-memory column is populated only for single words

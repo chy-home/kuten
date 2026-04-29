@@ -101,20 +101,50 @@ async function main() {
     assert.doesNotMatch(appContext.document.elements.resultText.value, /单词\ttasks\t/);
 
     appContext.document.elements.includePhrases.checked = true;
-    appContext.document.elements.sourceText.value = "real time real time";
+    appContext.document.elements.sourceText.value = "real time delivery";
     await appContext.document.elements.extractButton.dispatch("click");
-    assert.match(appContext.document.elements.resultText.value, /短语\treal time\t2\t.*\t.*\t$/m);
+    assert.match(appContext.document.elements.resultText.value, /短语\treal time\t.*\t.*\t.*\t1$/m);
+    appContext.document.elements.sourceText.value = "alpha beta alpha beta";
+    await appContext.document.elements.extractButton.dispatch("click");
+    assert.doesNotMatch(appContext.document.elements.resultText.value, /短语\talpha beta\t/);
     appContext.document.elements.includePhrases.checked = false;
 
     appContext.document.elements.knownWords.value = "";
     appContext.document.elements.sourceText.value = "freshword keepword keepword";
     await appContext.document.elements.extractButton.dispatch("click");
 
+    const initialRows = appContext.document.elements.resultText.value.split("\n");
+    assert.equal(initialRows[0], "序号\t类型\t内容\t音标\t释义\t词根记忆\t次数");
+
+    const thirdHeaderCell = appContext.document.elements.resultTableHeadRow.children[2];
+    await thirdHeaderCell.children[0].children[1].dispatch("click");
+    const hiddenTermRows = appContext.document.elements.resultText.value.split("\n");
+    assert.equal(hiddenTermRows[0], "序号\t类型\t音标\t释义\t词根记忆\t次数");
+
+    await appContext.document.elements.resetTableViewButton.dispatch("click");
+    const restoredTermRows = appContext.document.elements.resultText.value.split("\n");
+    assert.equal(restoredTermRows[0], "序号\t类型\t内容\t音标\t释义\t词根记忆\t次数");
+
+    const countHeaderCell = appContext.document.elements.resultTableHeadRow.children[6];
+    await countHeaderCell.children[0].dispatch("click");
+    const sortedRows = appContext.document.elements.resultText.value.split("\n");
+    assert.match(sortedRows[1], /^1\t单词\tfreshword\t.*\t1$/);
+    assert.match(sortedRows[2], /^2\t单词\tkeepword\t.*\t2$/);
+
+    const firstHeaderCell = appContext.document.elements.resultTableHeadRow.children[0];
+    const latestCountHeaderCell = appContext.document.elements.resultTableHeadRow.children[6];
+    const dragTransfer = createDataTransfer();
+    await firstHeaderCell.dispatch("dragstart", { dataTransfer: dragTransfer });
+    await latestCountHeaderCell.dispatch("dragover", { dataTransfer: dragTransfer });
+    await latestCountHeaderCell.dispatch("drop", { dataTransfer: dragTransfer });
+    const movedHeader = appContext.document.elements.resultText.value.split("\n")[0];
+    assert.equal(movedHeader, "类型\t内容\t音标\t释义\t词根记忆\t次数\t序号");
+
     appContext.document.elements.knownWords.value = "freshword";
     await appContext.document.elements.trimKnownWordsButton.dispatch("click");
 
     assert.doesNotMatch(appContext.document.elements.resultText.value, /单词\tfreshword\t/);
-    assert.match(appContext.document.elements.resultText.value, /单词\tkeepword\t2\t.*\t.*\t/);
+    assert.match(appContext.document.elements.resultText.value, /单词\tkeepword\t.*\t2\t1$/);
     assert.match(appContext.document.elements.summary.textContent, /已裁剪/);
 
     console.log("cache flow ok");
@@ -235,6 +265,7 @@ function createElements() {
     sourceText: createElement("textarea", { value: "" }),
     resultText: createElement("textarea", { value: "" }),
     resultTable: createElement("table", { hidden: true }),
+    resultTableHeadRow: createElement("tr"),
     resultTableBody: createElement("tbody"),
     resultEmptyState: createElement("div", { textContent: "" }),
     summary: createElement("div", { textContent: "" }),
@@ -245,7 +276,6 @@ function createElements() {
     copyButton: createElement("button"),
     downloadButton: createElement("button"),
     minWordLength: createElement("input", { value: "3" }),
-    minPhraseFrequency: createElement("input", { value: "2" }),
     excludeStopwords: createElement("input", { checked: true }),
     includePhrases: createElement("input", { checked: false }),
     useOnlineModel: createElement("input", { checked: true }),
@@ -253,7 +283,8 @@ function createElements() {
     translationEndpoint: createElement("input", { value: "" }),
     translationApiKey: createElement("input", { value: "" }),
     knownWords: createElement("textarea", { value: "" }),
-    trimKnownWordsButton: createElement("button")
+    trimKnownWordsButton: createElement("button"),
+    resetTableViewButton: createElement("button")
   };
 }
 
@@ -281,6 +312,7 @@ function createJsonResponse(data, ok = true) {
 
 function createElement(tagName, initialValues = {}) {
   const listeners = new Map();
+  const classNames = new Set();
   const element = {
     tagName,
     value: "",
@@ -291,7 +323,23 @@ function createElement(tagName, initialValues = {}) {
     href: "",
     download: "",
     placeholder: "",
+    disabled: false,
+    className: "",
+    type: "",
+    title: "",
+    draggable: false,
+    dataset: {},
     children: [],
+    classList: {
+      add(...names) {
+        names.filter(Boolean).forEach((name) => classNames.add(name));
+        element.className = [...classNames].join(" ");
+      },
+      remove(...names) {
+        names.filter(Boolean).forEach((name) => classNames.delete(name));
+        element.className = [...classNames].join(" ");
+      }
+    },
     addEventListener(eventName, listener) {
       listeners.set(eventName, listener);
     },
@@ -299,11 +347,20 @@ function createElement(tagName, initialValues = {}) {
       this.children.push(child);
       return child;
     },
-    async dispatch(eventName) {
+    async dispatch(eventName, extraEvent = {}) {
       const listener = listeners.get(eventName);
       if (listener) {
-        await listener({ target: this });
+        await listener(Object.assign({
+          target: this,
+          currentTarget: this,
+          preventDefault() {},
+          stopPropagation() {}
+        }, extraEvent));
       }
+    },
+    async setChecked(checked) {
+      this.checked = checked;
+      await this.dispatch("change");
     },
     click() {},
     focus() {},
@@ -320,6 +377,20 @@ function createElement(tagName, initialValues = {}) {
   });
 
   return Object.assign(element, initialValues);
+}
+
+function createDataTransfer() {
+  const values = new Map();
+  return {
+    effectAllowed: "",
+    dropEffect: "",
+    setData(type, value) {
+      values.set(type, value);
+    },
+    getData(type) {
+      return values.get(type) || "";
+    }
+  };
 }
 
 function postJson(pathname, data) {
