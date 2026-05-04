@@ -79,6 +79,17 @@ struct KeepSegment: Decodable {
     let duration: Double
 }
 
+struct EditableSegment {
+    let index: Int
+    var isEnabled: Bool
+    var start: Double
+    var end: Double
+
+    var duration: Double {
+        max(0.0, end - start)
+    }
+}
+
 struct CropParameters {
     let width: Int
     let height: Int
@@ -106,6 +117,10 @@ struct FFmpegJob {
         baseArguments(includeExecutionFlags: true)
     }
 
+    private var videoFilterExpression: String? {
+        crop?.filterExpression
+    }
+
     private func baseArguments(includeExecutionFlags: Bool) -> [String] {
         var args = [
             "-y",
@@ -124,28 +139,23 @@ struct FFmpegJob {
 
         args += [
             "-ss",
-            formatHMS(start),
+            formatSecondsArgument(start),
             "-i",
             inputURL.path,
             "-t",
-            formatHMS(duration),
-            "-map",
-            "0:v:0?",
+            formatSecondsArgument(duration),
         ]
-
-        if let crop {
-            args += ["-vf", crop.filterExpression]
-        }
 
         args += [
-            "-map",
-            "0:a?",
-            "-c:v",
-            "libx264",
-            "-c:a",
-            "aac",
-            outputURL.path,
+            "-strict",
+            "-2",
         ]
+
+        if let videoFilterExpression {
+            args += ["-vf", videoFilterExpression]
+        }
+
+        args.append(outputURL.path)
 
         return args
     }
@@ -170,6 +180,38 @@ func formatHMS(_ seconds: Double) -> String {
     let minutes = (wholeSeconds % 3600) / 60
     let secs = wholeSeconds % 60
     return String(format: "%02d:%02d:%02d.%03d", hours, minutes, secs, millis)
+}
+
+func formatSecondsArgument(_ seconds: Double) -> String {
+    let bounded = max(0.0, seconds)
+    let formatted = String(format: "%.3f", bounded)
+    let trimmed = formatted.replacingOccurrences(of: #"(\.\d*?[1-9])0+$"#, with: "$1", options: .regularExpression)
+    return trimmed.replacingOccurrences(of: #"\.0+$"#, with: "", options: .regularExpression)
+}
+
+func parseHMS(_ value: String) -> Double? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+
+    let parts = trimmed.split(separator: ":").map(String.init)
+    guard parts.count == 3 else {
+        return nil
+    }
+
+    guard
+        let hours = Int(parts[0]),
+        let minutes = Int(parts[1]),
+        let seconds = Double(parts[2]),
+        hours >= 0,
+        minutes >= 0, minutes < 60,
+        seconds >= 0, seconds < 60
+    else {
+        return nil
+    }
+
+    return Double(hours * 3600 + minutes * 60) + seconds
 }
 
 func formatShortSeconds(_ seconds: Double) -> String {
@@ -215,15 +257,29 @@ func makeOutputFileName(prefix: String, index: Int, pathExtension: String) -> St
     return "\(baseName).\(pathExtension)"
 }
 
-func buildJobs(payload: DetectorPayload, videoURL: URL, outputDirectoryURL: URL, prefix: String, crop: CropParameters?) -> [FFmpegJob] {
+func buildEditableSegments(payload: DetectorPayload) -> [EditableSegment] {
+    payload.keepSegments.map { segment in
+        EditableSegment(
+            index: segment.index,
+            isEnabled: true,
+            start: segment.start,
+            end: segment.end
+        )
+    }
+}
+
+func buildJobs(segments: [EditableSegment], videoURL: URL, outputDirectoryURL: URL, prefix: String, crop: CropParameters?) -> [FFmpegJob] {
     let inputExtension = videoURL.pathExtension
     let fallbackPrefix = videoURL.deletingPathExtension().lastPathComponent
     let safePrefix = sanitizePrefix(prefix, fallback: fallbackPrefix)
 
-    return payload.keepSegments.map { segment in
-        let fileName = makeOutputFileName(prefix: safePrefix, index: segment.index, pathExtension: inputExtension)
+    let enabledSegments = segments.filter { $0.isEnabled && $0.duration > 0 }
+
+    return enabledSegments.enumerated().map { offset, segment in
+        let outputIndex = offset + 1
+        let fileName = makeOutputFileName(prefix: safePrefix, index: outputIndex, pathExtension: inputExtension)
         return FFmpegJob(
-            index: segment.index,
+            index: outputIndex,
             inputURL: videoURL,
             outputURL: outputDirectoryURL.appendingPathComponent(fileName),
             start: segment.start,

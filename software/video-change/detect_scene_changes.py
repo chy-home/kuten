@@ -85,6 +85,10 @@ def round_time(value: float) -> float:
     return round(max(0.0, value), 3)
 
 
+def log_progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
 def format_hms(seconds: float) -> str:
     seconds = max(0.0, seconds)
     whole = int(seconds)
@@ -265,6 +269,8 @@ def read_rgb_stats(video_path: Path, width: int, height: int, skip_start_seconds
     diffs: list[float] = []
     gray_frames: list[object] = []
     prev_frame = None
+    frames_read = 0
+    progress_interval = 2500
 
     try:
         while True:
@@ -291,6 +297,9 @@ def read_rgb_stats(video_path: Path, width: int, height: int, skip_start_seconds
             else:
                 diffs.append(float(np.abs(frame.astype(np.int16) - prev_frame).mean() / 255.0))
             prev_frame = frame
+            frames_read += 1
+            if frames_read % progress_interval == 0:
+                log_progress(f"[detect] RGB frames read: {frames_read}")
     finally:
         stderr = proc.stderr.read() if proc.stderr is not None else b""
         ret = proc.wait()
@@ -421,6 +430,7 @@ def run_pyscenedetect_detectors(video_path: Path, width: int, height: int, fps: 
     content_cuts: list[int] = []
     adaptive_cuts: list[int] = []
     threshold_cuts: list[int] = []
+    progress_interval = 2500
 
     frame_num = 0
     try:
@@ -433,6 +443,8 @@ def run_pyscenedetect_detectors(video_path: Path, width: int, height: int, fps: 
             adaptive_cuts.extend(adaptive.process_frame(frame_num, frame))
             threshold_cuts.extend(threshold.process_frame(frame_num, frame))
             frame_num += 1
+            if frame_num > 0 and frame_num % progress_interval == 0:
+                log_progress(f"[detect] PySceneDetect frames processed: {frame_num}")
     finally:
         stderr = proc.stderr.read() if proc.stderr is not None else b""
         ret = proc.wait()
@@ -653,6 +665,7 @@ def complement_segments(
     fade_profile: FadeRemovalProfile,
     fade_left_padding_seconds: float,
     fade_right_padding_seconds: float,
+    minimum_start_seconds: float = 0.0,
 ) -> list[tuple[float, float]]:
     frame = 1.0 / fps if fps > 0 else 0.04
     removal: list[tuple[float, float]] = []
@@ -677,7 +690,7 @@ def complement_segments(
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
 
     kept: list[tuple[float, float]] = []
-    cursor = 0.0
+    cursor = max(0.0, min(minimum_start_seconds, duration))
     for start, end in merged:
         if start > cursor:
             kept.append((cursor, start))
@@ -715,11 +728,24 @@ def detect_scene_changes(
     fade_right_padding_seconds: float,
 ) -> tuple[float, float, list[Event]]:
     fps, duration = probe_video_info(video_path)
+    log_progress(f"[detect] Video opened: fps={round(fps, 3)} duration={round(duration, 3)}s")
     analysis_start = max(0.0, min(skip_start_seconds, duration))
+    log_progress(f"[detect] Analysis starts at {round(analysis_start, 3)}s")
+    log_progress("[detect] Reading RGB frame stats...")
     rgb_means, rgb_diffs, gray_frames = read_rgb_stats(video_path, width, height, analysis_start)
+    log_progress(f"[detect] RGB frame stats ready: {len(rgb_means)} frames")
+    log_progress("[detect] Reading ffmpeg scene scores...")
     scene_scores = read_scene_scores(video_path, width, height, analysis_start)
+    log_progress(f"[detect] Scene scores ready: {len(scene_scores)} frames")
+    log_progress("[detect] Running PySceneDetect detectors...")
     pyscene_cuts = run_pyscenedetect_detectors(video_path, width, height, fps, analysis_start)
+    log_progress(
+        "[detect] PySceneDetect ready: "
+        f"content={len(pyscene_cuts['content'])} adaptive={len(pyscene_cuts['adaptive'])} threshold={len(pyscene_cuts['threshold'])}"
+    )
+    log_progress("[detect] Reading black regions...")
     black_regions = read_black_regions(video_path, black_threshold, min_black_seconds, analysis_start)
+    log_progress(f"[detect] Black regions ready: {len(black_regions)}")
 
     frame_count = min(len(rgb_means), len(rgb_diffs), len(gray_frames), len(scene_scores))
     rgb_means = rgb_means[:frame_count]
@@ -728,8 +754,10 @@ def detect_scene_changes(
     scene_scores = scene_scores[:frame_count]
 
     black_events = detect_black_events(rgb_means, rgb_diffs, fps, black_regions, pyscene_cuts["threshold"])
+    log_progress(f"[detect] Black events: {len(black_events)}")
     blocked_regions = [(event.start, event.end) for event in black_events]
     cut_events = detect_cut_events(scene_scores, pyscene_cuts, fps, blocked_regions, cut_threshold)
+    log_progress(f"[detect] Cut events: {len(cut_events)}")
     fade_events = detect_fade_events(
         scene_scores=scene_scores,
         rgb_means=rgb_means,
@@ -742,12 +770,14 @@ def detect_scene_changes(
         fade_threshold=fade_threshold,
         fade_profile=fade_profile,
     )
+    log_progress(f"[detect] Fade events: {len(fade_events)}")
     events = merge_overlaps(black_events + cut_events + fade_events)
     if analysis_start > 0:
         for event in events:
             event.start += analysis_start
             event.end += analysis_start
     events.sort(key=lambda event: (event.start, event.end, event.kind))
+    log_progress(f"[detect] Final merged events: {len(events)}")
     return fps, duration, events
 
 
@@ -815,6 +845,7 @@ def main(argv: list[str]) -> int:
         fade_profile,
         fade_left_padding_seconds,
         fade_right_padding_seconds,
+        minimum_start_seconds=max(0.0, min(args.skip_start_seconds, duration)),
     )
     payload = {
         "video": str(video_path),

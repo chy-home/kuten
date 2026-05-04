@@ -24,27 +24,30 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     private let summaryLabel = NSTextField(labelWithString: "等待解析")
     private let eventTableView = NSTableView()
-    private let scriptTextView = NSTextView()
-    private var scriptLineRanges: [NSRange] = []
+    private let segmentTableView = NSTableView()
+    private let segmentMasterCheckbox = NSButton(checkboxWithTitle: "全选", target: nil, action: nil)
 
     private var selectedVideoURL: URL?
     private var selectedOutputDirectoryURL: URL?
     private var outputDirectoryWasChosenManually = false
     private var isProgrammaticallyUpdatingOutputDirectoryField = false
+    private var isProgrammaticallyUpdatingVideoField = false
     private var isProgrammaticallyUpdatingFadeFields = false
     private var detectorPayload: DetectorPayload?
+    private var editableSegments: [EditableSegment] = []
     private var generatedJobs: [FFmpegJob] = []
     private var splitCoordinator: SplitCoordinator?
+    private var contentSplitView: NSSplitView?
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1240, height: 860),
+            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Video Change"
-        window.minSize = NSSize(width: 1100, height: 760)
+        window.minSize = NSSize(width: 760, height: 520)
         super.init(window: window)
         buildUI()
         updateNamingPreview()
@@ -123,7 +126,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         }
 
         configureEventTable()
-        configureScriptView()
+        configureSegmentTable()
 
         let headerStack = NSStackView()
         headerStack.orientation = .vertical
@@ -142,7 +145,8 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         contentSplit.translatesAutoresizingMaskIntoConstraints = false
         contentSplit.addArrangedSubview(resultPanel)
         contentSplit.addArrangedSubview(scriptPanel)
-        contentSplit.setPosition(560, ofDividerAt: 0)
+        contentSplit.setPosition(500, ofDividerAt: 0)
+        self.contentSplitView = contentSplit
 
         let rootStack = NSStackView()
         rootStack.orientation = .vertical
@@ -152,15 +156,29 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         rootStack.addArrangedSubview(controlsPanel)
         rootStack.addArrangedSubview(contentSplit)
 
-        contentView.addSubview(rootStack)
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.documentView = rootStack
+        scrollView.autohidesScrollers = true
+
+        contentView.addSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            rootStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 22),
-            rootStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -22),
-            rootStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22),
-            rootStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -22),
-            controlsPanel.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
-            contentSplit.heightAnchor.constraint(greaterThanOrEqualToConstant: 420),
+            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            rootStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor, constant: 22),
+            rootStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor, constant: -22),
+            rootStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor, constant: 22),
+            rootStack.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor, constant: -22),
+            rootStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 980),
+            controlsPanel.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
+            contentSplit.heightAnchor.constraint(greaterThanOrEqualToConstant: 340),
         ])
     }
 
@@ -270,14 +288,23 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         let panel = PanelContainerView()
         panel.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = makeSectionTitle("FFmpeg 脚本")
-        let subtitle = NSTextField(labelWithString: "这里直接显示将要执行的脚本。")
+        let title = makeSectionTitle("分解片段")
+        let subtitle = NSTextField(labelWithString: "仅显示开始时间、结束时间；支持手动修改和禁用。")
         subtitle.font = .systemFont(ofSize: 13)
         subtitle.textColor = .secondaryLabelColor
 
-        let scrollView = makeTextScrollView(for: scriptTextView)
+        segmentMasterCheckbox.font = .systemFont(ofSize: 13, weight: .medium)
+        segmentMasterCheckbox.target = self
+        segmentMasterCheckbox.action = #selector(segmentMasterCheckboxChanged(_:))
 
-        let headerStack = NSStackView(views: [title, subtitle])
+        let scrollView = makeTableScrollView(for: segmentTableView)
+
+        let titleRow = NSStackView(views: [title, segmentMasterCheckbox])
+        titleRow.orientation = .horizontal
+        titleRow.spacing = 12
+        titleRow.alignment = .centerY
+
+        let headerStack = NSStackView(views: [titleRow, subtitle])
         headerStack.orientation = .vertical
         headerStack.spacing = 4
         headerStack.translatesAutoresizingMaskIntoConstraints = false
@@ -403,32 +430,6 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         }
     }
 
-    private func configureScriptView() {
-        scriptTextView.isEditable = false
-        scriptTextView.isSelectable = true
-        scriptTextView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-        scriptTextView.drawsBackground = true
-        scriptTextView.backgroundColor = .textBackgroundColor
-        scriptTextView.textContainerInset = NSSize(width: 12, height: 14)
-        scriptTextView.isVerticallyResizable = true
-        scriptTextView.isHorizontallyResizable = false
-        scriptTextView.autoresizingMask = [.width]
-        scriptTextView.textContainer?.widthTracksTextView = true
-        scriptTextView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-        scriptTextView.string = "生成的 ffmpeg 脚本会显示在这里。"
-    }
-
-    private func makeTextScrollView(for textView: NSTextView) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.borderType = .bezelBorder
-        scrollView.drawsBackground = false
-        scrollView.documentView = textView
-        return scrollView
-    }
-
     private func makeTableScrollView(for tableView: NSTableView) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -440,87 +441,58 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         return scrollView
     }
 
-    private func updateScriptText(with jobs: [FFmpegJob]) {
-        scriptLineRanges = []
+    private func configureSegmentTable() {
+        segmentTableView.headerView = NSTableHeaderView()
+        segmentTableView.usesAlternatingRowBackgroundColors = true
+        segmentTableView.rowHeight = 34
+        segmentTableView.intercellSpacing = NSSize(width: 8, height: 4)
+        segmentTableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        segmentTableView.delegate = self
+        segmentTableView.dataSource = self
+        segmentTableView.allowsMultipleSelection = true
 
-        guard !jobs.isEmpty else {
-            scriptTextView.string = "没有可分解的保留片段。"
-            return
+        let columns: [(String, String, CGFloat)] = [
+            ("enabled", "启用", 70),
+            ("start", "开始时间", 150),
+            ("end", "结束时间", 150),
+        ]
+
+        for (identifier, title, width) in columns {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(identifier))
+            column.title = title
+            column.width = width
+            column.minWidth = width
+            segmentTableView.addTableColumn(column)
         }
-
-        let fullText = jobs.map(\.commandPreview).joined(separator: "\n")
-        let attributed = NSMutableAttributedString(string: fullText)
-        let fullRange = NSRange(location: 0, length: attributed.length)
-        attributed.addAttributes([
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-            .foregroundColor: NSColor.labelColor,
-            .backgroundColor: NSColor.textBackgroundColor,
-        ], range: fullRange)
-
-        var cursor = 0
-        for (index, job) in jobs.enumerated() {
-            let line = job.commandPreview
-            let range = NSRange(location: cursor, length: line.count)
-            scriptLineRanges.append(range)
-            cursor += line.count
-            if index < jobs.count - 1 {
-                cursor += 1
-            }
-        }
-
-        scriptTextView.textStorage?.setAttributedString(attributed)
-        scriptTextView.layoutManager?.ensureLayout(for: scriptTextView.textContainer!)
     }
 
-    private func highlightScriptRanges(forEventAt row: Int?) {
-        guard let payload = detectorPayload else {
-            return
-        }
-
-        let attributed = NSMutableAttributedString(attributedString: scriptTextView.attributedString())
-        let fullRange = NSRange(location: 0, length: attributed.length)
-        if fullRange.length > 0 {
-            attributed.addAttribute(.backgroundColor, value: NSColor.textBackgroundColor, range: fullRange)
-        }
-
+    private func highlightSegmentRows(forEventAt row: Int?) {
         guard
             let row,
+            let payload = detectorPayload,
             row >= 0,
-            row < payload.events.count,
-            !generatedJobs.isEmpty
+            row < payload.events.count
         else {
-            scriptTextView.textStorage?.setAttributedString(attributed)
+            segmentTableView.deselectAll(nil)
             return
         }
 
         let event = payload.events[row]
-        let relatedIndices = relatedKeepSegmentIndices(for: event)
-        var firstHighlightedRange: NSRange?
-
-        for keepIndex in relatedIndices {
-            let scriptLineIndex = keepIndex - 1
-            guard scriptLineIndex >= 0, scriptLineIndex < scriptLineRanges.count else {
-                continue
+        let relatedIndices = Set(relatedKeepSegmentIndices(for: event))
+        let rowIndexes = IndexSet(
+            editableSegments.enumerated().compactMap { index, segment in
+                relatedIndices.contains(segment.index) ? index : nil
             }
+        )
 
-            let range = scriptLineRanges[scriptLineIndex]
-            attributed.addAttribute(
-                .backgroundColor,
-                value: NSColor.controlAccentColor.withAlphaComponent(0.22),
-                range: range
-            )
-            if firstHighlightedRange == nil {
-                firstHighlightedRange = range
-            }
+        guard !rowIndexes.isEmpty else {
+            segmentTableView.deselectAll(nil)
+            return
         }
 
-        scriptTextView.textStorage?.setAttributedString(attributed)
-
-        if let range = firstHighlightedRange {
-            scriptTextView.scrollRangeToVisible(range)
-            scriptTextView.setSelectedRange(range)
-        } else {
-            scriptTextView.setSelectedRange(NSRange(location: 0, length: 0))
+        segmentTableView.selectRowIndexes(rowIndexes, byExtendingSelection: false)
+        if let first = rowIndexes.first {
+            segmentTableView.scrollRowToVisible(first)
         }
     }
 
@@ -696,7 +668,9 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     private func applyVideoURL(_ url: URL) {
         selectedVideoURL = url
+        isProgrammaticallyUpdatingVideoField = true
         videoPathField.stringValue = url.path
+        isProgrammaticallyUpdatingVideoField = false
 
         if !outputDirectoryWasChosenManually || selectedOutputDirectoryURL == nil {
             applyOutputDirectoryURL(url.deletingLastPathComponent(), manual: false)
@@ -737,26 +711,31 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     private func refreshGeneratedJobs() {
         guard let detectorPayload, let selectedVideoURL, let outputDirectoryURL = resolvedOutputDirectoryURL() else {
             generatedJobs = []
-            scriptLineRanges = []
-            scriptTextView.string = "生成的 ffmpeg 脚本会显示在这里。"
+            editableSegments = []
+            segmentTableView.reloadData()
+            updateSegmentMasterCheckboxState()
             updateSplitButtonState()
             updateNamingPreview()
             return
         }
 
+        if editableSegments.isEmpty {
+            editableSegments = buildEditableSegments(payload: detectorPayload)
+        }
+
         generatedJobs = buildJobs(
-            payload: detectorPayload,
+            segments: editableSegments,
             videoURL: selectedVideoURL,
             outputDirectoryURL: outputDirectoryURL,
             prefix: prefixField.stringValue,
             crop: currentCropParameters()
         )
 
-        updateScriptText(with: generatedJobs)
-
         summaryLabel.stringValue = "换场 \(detectorPayload.events.count) 个，保留片段 \(detectorPayload.keepSegments.count) 个"
         eventTableView.reloadData()
-        highlightScriptRanges(forEventAt: eventTableView.selectedRow >= 0 ? eventTableView.selectedRow : nil)
+        segmentTableView.reloadData()
+        updateSegmentMasterCheckboxState()
+        highlightSegmentRows(forEventAt: eventTableView.selectedRow >= 0 ? eventTableView.selectedRow : nil)
         updateSplitButtonState()
         updateNamingPreview()
     }
@@ -779,12 +758,89 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     private func clearDetectionResults() {
         detectorPayload = nil
+        editableSegments = []
         generatedJobs = []
-        scriptLineRanges = []
         summaryLabel.stringValue = "等待解析"
-        scriptTextView.string = "生成的 ffmpeg 脚本会显示在这里。"
         eventTableView.reloadData()
+        segmentTableView.reloadData()
+        updateSegmentMasterCheckboxState()
         updateSplitButtonState()
+    }
+
+    private func rebuildJobsFromEditableSegments() {
+        refreshGeneratedJobs()
+    }
+
+    private func updateSegmentMasterCheckboxState() {
+        guard !editableSegments.isEmpty else {
+            segmentMasterCheckbox.state = .off
+            segmentMasterCheckbox.isEnabled = false
+            return
+        }
+
+        segmentMasterCheckbox.isEnabled = true
+        let enabledCount = editableSegments.filter(\.isEnabled).count
+        if enabledCount == 0 {
+            segmentMasterCheckbox.state = .off
+        } else if enabledCount == editableSegments.count {
+            segmentMasterCheckbox.state = .on
+        } else {
+            segmentMasterCheckbox.state = .mixed
+        }
+    }
+
+    @objc private func segmentEnabledChanged(_ sender: NSButton) {
+        let row = sender.tag
+        guard row >= 0, row < editableSegments.count else {
+            return
+        }
+        editableSegments[row].isEnabled = sender.state == .on
+        rebuildJobsFromEditableSegments()
+    }
+
+    @objc private func segmentMasterCheckboxChanged(_ sender: NSButton) {
+        guard !editableSegments.isEmpty else {
+            updateSegmentMasterCheckboxState()
+            return
+        }
+
+        let shouldEnableAll = sender.state != .off
+        for index in editableSegments.indices {
+            editableSegments[index].isEnabled = shouldEnableAll
+        }
+        rebuildJobsFromEditableSegments()
+    }
+
+    @objc private func segmentTimeFieldChanged(_ sender: SegmentTimeField) {
+        let row = sender.segmentRow
+        guard row >= 0, row < editableSegments.count else {
+            return
+        }
+
+        guard let parsed = parseHMS(sender.stringValue) else {
+            sender.stringValue = formatHMS(sender.kind == .start ? editableSegments[row].start : editableSegments[row].end)
+            showError("时间格式应为 时:分:秒.毫秒，例如 00:01:23.456。")
+            return
+        }
+
+        switch sender.kind {
+        case .start:
+            guard parsed < editableSegments[row].end else {
+                sender.stringValue = formatHMS(editableSegments[row].start)
+                showError("开始时间必须小于结束时间。")
+                return
+            }
+            editableSegments[row].start = parsed
+        case .end:
+            guard parsed > editableSegments[row].start else {
+                sender.stringValue = formatHMS(editableSegments[row].end)
+                showError("结束时间必须大于开始时间。")
+                return
+            }
+            editableSegments[row].end = parsed
+        }
+
+        rebuildJobsFromEditableSegments()
     }
 
     private func currentConcurrency() -> Int {
@@ -812,6 +868,41 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else {
+            return
+        }
+
+        if field == videoPathField {
+            if isProgrammaticallyUpdatingVideoField {
+                return
+            }
+            let typed = videoPathField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !typed.isEmpty else {
+                selectedVideoURL = nil
+                clearDetectionResults()
+                updateNamingPreview()
+                statusLabel.stringValue = "请输入视频文件路径，或直接拖入视频。"
+                return
+            }
+
+            let url = URL(fileURLWithPath: typed)
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            if exists && !isDirectory.boolValue {
+                selectedVideoURL = url
+                if !outputDirectoryWasChosenManually || selectedOutputDirectoryURL == nil {
+                    applyOutputDirectoryURL(url.deletingLastPathComponent(), manual: false)
+                }
+                if detectorPayload != nil {
+                    clearDetectionResults()
+                }
+                updateNamingPreview()
+                statusLabel.stringValue = "视频路径已更新，点击“解析”生成结果和脚本。"
+            } else {
+                selectedVideoURL = nil
+                clearDetectionResults()
+                updateNamingPreview()
+                statusLabel.stringValue = "当前视频路径无效，请检查文件是否存在。"
+            }
             return
         }
 
@@ -854,6 +945,16 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
         if field == concurrencyField {
             _ = currentConcurrency()
+        }
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField else {
+            return
+        }
+
+        if let segmentField = field as? SegmentTimeField {
+            segmentTimeFieldChanged(segmentField)
         }
     }
 
@@ -973,13 +1074,19 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                 skipStartSeconds: currentSkipStartSeconds(),
                 fadeRemovalStrategy: strategy,
                 fadeLeftPaddingSeconds: padding.leftSeconds,
-                fadeRightPaddingSeconds: padding.rightSeconds
+                fadeRightPaddingSeconds: padding.rightSeconds,
+                progress: { [weak self] message in
+                    DispatchQueue.main.async {
+                        self?.statusLabel.stringValue = message
+                    }
+                }
             ) { result in
                 DispatchQueue.main.async {
                     self.parseButton.isEnabled = true
                     switch result {
                     case .success(let payload):
                         self.detectorPayload = payload
+                        self.editableSegments = buildEditableSegments(payload: payload)
                         self.refreshGeneratedJobs()
                         self.statusLabel.stringValue = "解析完成：\(payload.events.count) 个换场，\(payload.keepSegments.count) 个保留片段，Fade=\(strategy.displayName) L=\(String(format: "%.2f", padding.leftSeconds))s R=\(String(format: "%.2f", padding.rightSeconds))s。"
                     case .failure(let error):
@@ -1065,48 +1172,105 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        detectorPayload?.events.count ?? 0
+        if tableView == eventTableView {
+            return detectorPayload?.events.count ?? 0
+        }
+        if tableView == segmentTableView {
+            return editableSegments.count
+        }
+        return 0
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        highlightScriptRanges(forEventAt: eventTableView.selectedRow >= 0 ? eventTableView.selectedRow : nil)
+        guard let tableView = notification.object as? NSTableView else {
+            return
+        }
+        if tableView == eventTableView {
+            highlightSegmentRows(forEventAt: eventTableView.selectedRow >= 0 ? eventTableView.selectedRow : nil)
+        }
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard
-            let event = detectorPayload?.events[row],
-            let identifier = tableColumn?.identifier
-        else {
+        guard let identifier = tableColumn?.identifier else {
             return nil
         }
 
-        let cellIdentifier = NSUserInterfaceItemIdentifier("cell-\(identifier.rawValue)")
-        let textField: NSTextField
-        if let cell = tableView.makeView(withIdentifier: cellIdentifier, owner: nil) as? NSTextField {
-            textField = cell
-        } else {
-            textField = NSTextField(labelWithString: "")
-            textField.identifier = cellIdentifier
-            textField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-            textField.lineBreakMode = .byTruncatingTail
+        if tableView == eventTableView {
+            guard let event = detectorPayload?.events[row] else {
+                return nil
+            }
+
+            let cellIdentifier = NSUserInterfaceItemIdentifier("event-cell-\(identifier.rawValue)")
+            let textField: NSTextField
+            if let cell = tableView.makeView(withIdentifier: cellIdentifier, owner: nil) as? NSTextField {
+                textField = cell
+            } else {
+                textField = NSTextField(labelWithString: "")
+                textField.identifier = cellIdentifier
+                textField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+                textField.lineBreakMode = .byTruncatingTail
+            }
+
+            switch identifier.rawValue {
+            case "index":
+                textField.stringValue = "\(event.index)"
+            case "type":
+                textField.stringValue = event.type
+            case "start":
+                textField.stringValue = formatHMS(event.start)
+            case "end":
+                textField.stringValue = formatHMS(event.end)
+            case "duration":
+                textField.stringValue = formatShortSeconds(event.duration)
+            case "source":
+                textField.stringValue = event.source
+            default:
+                textField.stringValue = ""
+            }
+            return textField
         }
 
-        switch identifier.rawValue {
-        case "index":
-            textField.stringValue = "\(event.index)"
-        case "type":
-            textField.stringValue = event.type
-        case "start":
-            textField.stringValue = formatHMS(event.start)
-        case "end":
-            textField.stringValue = formatHMS(event.end)
-        case "duration":
-            textField.stringValue = formatShortSeconds(event.duration)
-        case "source":
-            textField.stringValue = event.source
-        default:
-            textField.stringValue = ""
+        if tableView == segmentTableView {
+            let segment = editableSegments[row]
+
+            switch identifier.rawValue {
+            case "enabled":
+                let buttonIdentifier = NSUserInterfaceItemIdentifier("segment-enabled")
+                let button: NSButton
+                if let reused = tableView.makeView(withIdentifier: buttonIdentifier, owner: nil) as? NSButton {
+                    button = reused
+                } else {
+                    button = NSButton(checkboxWithTitle: "", target: self, action: #selector(segmentEnabledChanged(_:)))
+                    button.identifier = buttonIdentifier
+                }
+                button.tag = row
+                button.state = segment.isEnabled ? .on : .off
+                return button
+            case "start", "end":
+                let fieldIdentifier = NSUserInterfaceItemIdentifier("segment-\(identifier.rawValue)")
+                let field: SegmentTimeField
+                if let reused = tableView.makeView(withIdentifier: fieldIdentifier, owner: nil) as? SegmentTimeField {
+                    field = reused
+                } else {
+                    field = SegmentTimeField(frame: .zero)
+                    field.identifier = fieldIdentifier
+                    field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+                    field.alignment = .center
+                    field.controlSize = .large
+                    field.delegate = self
+                    field.target = self
+                    field.action = #selector(segmentTimeFieldChanged(_:))
+                }
+                field.segmentRow = row
+                field.kind = identifier.rawValue == "start" ? .start : .end
+                field.stringValue = formatHMS(identifier.rawValue == "start" ? segment.start : segment.end)
+                field.textColor = segment.isEnabled ? .labelColor : .secondaryLabelColor
+                return field
+            default:
+                return nil
+            }
         }
-        return textField
+
+        return nil
     }
 }

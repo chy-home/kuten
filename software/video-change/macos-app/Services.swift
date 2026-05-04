@@ -133,6 +133,7 @@ final class DetectorService {
         fadeRemovalStrategy: FadeRemovalStrategy,
         fadeLeftPaddingSeconds: Double,
         fadeRightPaddingSeconds: Double,
+        progress: @escaping (String) -> Void,
         completion: @escaping (Result<DetectorPayload, Error>) -> Void
     ) {
         DispatchQueue.global(qos: .userInitiated).async {
@@ -142,7 +143,8 @@ final class DetectorService {
                     skipStartSeconds: skipStartSeconds,
                     fadeRemovalStrategy: fadeRemovalStrategy,
                     fadeLeftPaddingSeconds: fadeLeftPaddingSeconds,
-                    fadeRightPaddingSeconds: fadeRightPaddingSeconds
+                    fadeRightPaddingSeconds: fadeRightPaddingSeconds,
+                    progress: progress
                 )
                 completion(.success(payload))
             } catch {
@@ -156,7 +158,8 @@ final class DetectorService {
         skipStartSeconds: Double = 0.0,
         fadeRemovalStrategy: FadeRemovalStrategy = .defaultValue,
         fadeLeftPaddingSeconds: Double,
-        fadeRightPaddingSeconds: Double
+        fadeRightPaddingSeconds: Double,
+        progress: ((String) -> Void)? = nil
     ) throws -> DetectorPayload {
         let process = Process()
         process.executableURL = runtime.pythonURL
@@ -181,11 +184,81 @@ final class DetectorService {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        let bufferQueue = DispatchQueue(label: "DetectorService.pipe-buffer")
+        var stdoutBuffer = Data()
+        var stderrBuffer = Data()
+        var stderrProgressBuffer = Data()
+
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                return
+            }
+            bufferQueue.sync {
+                stdoutBuffer.append(data)
+            }
+        }
+
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                return
+            }
+
+            var lines: [String] = []
+            bufferQueue.sync {
+                stderrBuffer.append(data)
+                stderrProgressBuffer.append(data)
+                while let newlineRange = stderrProgressBuffer.range(of: Data([0x0a])) {
+                    let lineData = stderrProgressBuffer.subdata(in: 0..<newlineRange.lowerBound)
+                    stderrProgressBuffer.removeSubrange(0...newlineRange.lowerBound)
+                    let line = String(data: lineData, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    if !line.isEmpty {
+                        lines.append(line)
+                    }
+                }
+            }
+
+            for line in lines {
+                progress?(line)
+            }
+        }
+
         try process.run()
         process.waitUntilExit()
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
 
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let remainingStdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let remainingStderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        var finalStdoutData = Data()
+        var finalStderrData = Data()
+        var trailingLines: [String] = []
+
+        bufferQueue.sync {
+            if !remainingStdout.isEmpty {
+                stdoutBuffer.append(remainingStdout)
+            }
+            if !remainingStderr.isEmpty {
+                stderrBuffer.append(remainingStderr)
+                stderrProgressBuffer.append(remainingStderr)
+            }
+            let trailingLine = String(data: stderrProgressBuffer, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trailingLine.isEmpty {
+                trailingLines.append(trailingLine)
+            }
+            finalStdoutData = stdoutBuffer
+            finalStderrData = stderrBuffer
+        }
+
+        for line in trailingLines {
+            progress?(line)
+        }
+
+        let stdoutData = finalStdoutData
+        let stderrData = finalStderrData
         let stdoutText = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
 

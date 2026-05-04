@@ -139,3 +139,13 @@ final class DroppablePathField: NSTextField {
         }
     }
 }
+
+final class SegmentTimeField: NSTextField {
+    enum Kind {
+        case start
+        case end
+    }
+
+    var segmentRow: Int = -1
+    var kind: Kind = .start
+}

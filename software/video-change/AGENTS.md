@@ -37,13 +37,16 @@ The app supports:
 - selecting or editing the output directory
 - output naming with `prefix-01.ext`
 - parsing scene transitions
-- showing transition rows and generated ffmpeg commands
+- showing transition rows and editable keep segments
 - splitting kept segments with adjustable concurrency
 - drag/drop for file and directory paths
 - crop input in `w:h:x:y` format
 - skip-start detection seconds
 - fade removal strategy selection
 - per-strategy manual left/right fade padding seconds
+- per-segment enable/disable
+- per-segment editable start/end time
+- a master checkbox for bulk enable/disable of all split segments
 
 ## Runtime
 
@@ -131,6 +134,27 @@ The detector outputs:
 
 The generated ffmpeg commands keep normal scenes and delete transition ranges.
 
+## FFmpeg Job Format
+
+The current split job format must stay aligned with the GUI segment table.
+
+Each enabled keep segment becomes one ffmpeg job in this shape:
+
+```bash
+ffmpeg -y -hide_banner -ss <start-seconds> -i "<input>" -t <duration-seconds> -strict -2 [-vf crop=w:h:x:y] "<output>"
+```
+
+Important details:
+
+- `-ss` appears before `-i`
+- `-t` appears after `-i`
+- `start-seconds` comes from the editable segment start time
+- `duration-seconds` is computed from `end - start`
+- GUI time fields are shown as `HH:MM:SS.mmm`
+- ffmpeg arguments use trimmed second values such as `34`, `34.4`, or `34.422`
+- the current job generator no longer injects `setpts`, explicit `-map`, or forced x264 keyframe parameters
+- output file extension remains the same as the source video extension
+
 ## UI Notes
 
 The current fade control is a radio-button group, not a popup:
@@ -138,10 +162,21 @@ The current fade control is a radio-button group, not a popup:
 - one radio button per fade strategy
 - editable left/right second fields per strategy
 
+The split segment area is no longer a raw ffmpeg script text view.
+
+- it is a table of keep segments
+- columns are `启用`, `开始时间`, `结束时间`
+- rows remain visible even when disabled
+- disabled rows do not generate ffmpeg jobs
+- editing start/end time changes the real split job
+- clicking a transition row should still highlight related keep-segment rows
+- the title area contains a master checkbox labeled `全选`
+- the master checkbox supports all-on, all-off, and mixed state
+
 When changing the selected fade strategy or its padding values:
 
 - if the video has already been parsed, the app should re-run parsing
-- the result table and script view should refresh to the new strategy
+- the result table and segment table should refresh to the new strategy
 
 ## Build
 
@@ -189,7 +224,9 @@ Useful fade validation example:
 - Do not revert unrelated user changes.
 - Keep Swift-side default fade padding values aligned with Python-side defaults.
 - Keep UI labels and Python argument values aligned for fade strategy names.
-- The script preview must match the actual ffmpeg execution arguments.
+- Worker-window command preview and actual ffmpeg execution arguments must match.
+- The segment table is the source of truth for split jobs; manual edits must flow into execution.
+- The master segment checkbox state must stay synced with individual segment rows.
 - `crop` must remain a single string input in `w:h:x:y` format.
 - `skip-start-seconds` support must be preserved end-to-end.
 - Worker windows should continue to show ffmpeg progress logs.
