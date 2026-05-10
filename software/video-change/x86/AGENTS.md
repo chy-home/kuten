@@ -36,9 +36,11 @@ The app supports:
 - selecting a video file
 - selecting or editing the output directory
 - output naming with `prefix-01.ext`
+- validation clip naming with `prefix-transition-01.ext`
 - parsing scene transitions
 - showing transition rows and editable keep segments
 - splitting kept segments with adjustable concurrency
+- exporting transition validation clips with adjustable concurrency
 - drag/drop for file and directory paths
 - crop input in `w:h:x:y` format
 - skip-start detection seconds
@@ -155,6 +157,14 @@ Important details:
 - the current job generator no longer injects `setpts`, explicit `-map`, or forced x264 keyframe parameters
 - output file extension remains the same as the source video extension
 
+Transition validation export reuses the same ffmpeg execution path and argument order.
+
+- it is a separate export action from normal split export
+- it is driven by transition events, not by the editable keep-segment table
+- each transition validation clip expands the detected event range by `0.5` seconds on both sides
+- validation clip range must be clamped to `0...video-duration`
+- validation clip output naming uses `prefix-transition-01.ext`
+
 ## UI Notes
 
 The current fade control is a radio-button group, not a popup:
@@ -172,6 +182,13 @@ The split segment area is no longer a raw ffmpeg script text view.
 - clicking a transition row should still highlight related keep-segment rows
 - the title area contains a master checkbox labeled `全选`
 - the master checkbox supports all-on, all-off, and mixed state
+
+The transition result panel now also has a dedicated button:
+
+- button label is `验证导出`
+- it exports all detected transition clips for manual inspection
+- it must not mutate the keep-segment table or replace split-job data
+- it reuses the same worker-window execution flow as `分解`
 
 When changing the selected fade strategy or its padding values:
 
@@ -226,6 +243,7 @@ Useful fade validation example:
 - Keep UI labels and Python argument values aligned for fade strategy names.
 - Worker-window command preview and actual ffmpeg execution arguments must match.
 - The segment table is the source of truth for split jobs; manual edits must flow into execution.
+- Transition validation export must remain separate from the segment-table split-job source of truth.
 - The master segment checkbox state must stay synced with individual segment rows.
 - `crop` must remain a single string input in `w:h:x:y` format.
 - `skip-start-seconds` support must be preserved end-to-end.

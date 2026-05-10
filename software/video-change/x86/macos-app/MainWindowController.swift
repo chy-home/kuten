@@ -2,6 +2,83 @@ import AppKit
 import UniformTypeIdentifiers
 
 final class MainWindowController: NSWindowController, NSTextFieldDelegate, SplitCoordinatorDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    private enum ExportOperationKind {
+        case split
+        case validateTransitions
+
+        var workerWindowTitlePrefix: String {
+            switch self {
+            case .split:
+                return "分解任务"
+            case .validateTransitions:
+                return "验证片段任务"
+            }
+        }
+
+        var initialStatusText: String {
+            switch self {
+            case .split:
+                return "开始分解..."
+            case .validateTransitions:
+                return "开始导出验证片段..."
+            }
+        }
+
+        var emptyJobsErrorMessage: String {
+            switch self {
+            case .split:
+                return "当前没有可执行的 ffmpeg 任务，请先点击“解析”。"
+            case .validateTransitions:
+                return "当前没有可导出的换场片段，请先点击“解析”。"
+            }
+        }
+
+        var launchFailureStatusText: String {
+            switch self {
+            case .split:
+                return "分解启动失败。"
+            case .validateTransitions:
+                return "验证片段导出启动失败。"
+            }
+        }
+
+        func startStatusText(totalJobs: Int, workerCount: Int) -> String {
+            switch self {
+            case .split:
+                return "开始分解：\(totalJobs) 个任务，\(workerCount) 个并发窗口。"
+            case .validateTransitions:
+                return "开始导出验证片段：\(totalJobs) 个任务，\(workerCount) 个并发窗口。"
+            }
+        }
+
+        func updateStatusText(completed: Int, failed: Int, total: Int) -> String {
+            switch self {
+            case .split:
+                return "分解中：完成 \(completed) / \(total)，失败 \(failed)。"
+            case .validateTransitions:
+                return "验证片段导出中：完成 \(completed) / \(total)，失败 \(failed)。"
+            }
+        }
+
+        func finishStatusText(completed: Int, failed: Int, total: Int) -> String {
+            switch self {
+            case .split:
+                return "分解完成：成功 \(completed) / \(total)，失败 \(failed)。"
+            case .validateTransitions:
+                return "验证片段导出完成：成功 \(completed) / \(total)，失败 \(failed)。"
+            }
+        }
+
+        func failureAlertMessage(failed: Int) -> String {
+            switch self {
+            case .split:
+                return "共有 \(failed) 个 ffmpeg 任务失败，请检查子窗口日志。"
+            case .validateTransitions:
+                return "共有 \(failed) 个验证片段导出任务失败，请检查子窗口日志。"
+            }
+        }
+    }
+
     private let headerTitleLabel = NSTextField(labelWithString: "Video Change")
     private let headerSubtitleLabel = NSTextField(labelWithString: "识别换场，生成脚本，并按并发窗口执行分解。")
 
@@ -21,6 +98,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     private let parseButton = NSButton(title: "解析", target: nil, action: nil)
     private let splitButton = NSButton(title: "分解", target: nil, action: nil)
+    private let validateTransitionsButton = NSButton(title: "验证导出", target: nil, action: nil)
 
     private let summaryLabel = NSTextField(labelWithString: "等待解析")
     private let eventTableView = NSTableView()
@@ -38,6 +116,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     private var editableSegments: [EditableSegment] = []
     private var generatedJobs: [FFmpegJob] = []
     private var splitCoordinator: SplitCoordinator?
+    private var activeExportOperation: ExportOperationKind?
     private var hoveredManualSegmentRow: Int?
 
     init() {
@@ -104,6 +183,11 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         splitButton.font = .systemFont(ofSize: 15, weight: .semibold)
         splitButton.target = self
         splitButton.action = #selector(splitVideo(_:))
+
+        validateTransitionsButton.bezelStyle = .rounded
+        validateTransitionsButton.font = .systemFont(ofSize: 13, weight: .semibold)
+        validateTransitionsButton.target = self
+        validateTransitionsButton.action = #selector(exportValidationTransitions(_:))
 
         configureSmallField(skipStartField, placeholder: "0")
         skipStartField.stringValue = "0"
@@ -267,7 +351,12 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
         let scrollView = makeTableScrollView(for: eventTableView)
 
-        let headerStack = NSStackView(views: [title, subtitle, summaryLabel])
+        let titleRow = NSStackView(views: [title, validateTransitionsButton])
+        titleRow.orientation = .horizontal
+        titleRow.spacing = 12
+        titleRow.alignment = .centerY
+
+        let headerStack = NSStackView(views: [titleRow, subtitle, summaryLabel])
         headerStack.orientation = .vertical
         headerStack.spacing = 4
         headerStack.translatesAutoresizingMaskIntoConstraints = false
@@ -769,6 +858,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     private func updateSplitButtonState() {
         splitButton.isEnabled = splitCoordinator == nil && !generatedJobs.isEmpty
+        validateTransitionsButton.isEnabled = splitCoordinator == nil && !(detectorPayload?.events.isEmpty ?? true)
         addSegmentButton.isEnabled = splitCoordinator == nil
     }
 
@@ -1168,12 +1258,38 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     }
 
     @objc private func splitVideo(_ sender: Any?) {
-        guard splitCoordinator == nil else {
-            return
+        startExport(operation: .split) { [weak self] in
+            guard let self else {
+                return []
+            }
+            self.refreshGeneratedJobs()
+            return self.generatedJobs
         }
+    }
 
-        guard !generatedJobs.isEmpty else {
-            showError("当前没有可执行的 ffmpeg 任务，请先点击“解析”。")
+    @objc private func exportValidationTransitions(_ sender: Any?) {
+        startExport(operation: .validateTransitions) { [weak self] in
+            guard
+                let self,
+                let payload = self.detectorPayload,
+                let videoURL = self.selectedVideoURL,
+                let outputDirectoryURL = self.resolvedOutputDirectoryURL()
+            else {
+                return []
+            }
+
+            return buildTransitionValidationJobs(
+                payload: payload,
+                videoURL: videoURL,
+                outputDirectoryURL: outputDirectoryURL,
+                prefix: self.prefixField.stringValue,
+                crop: self.currentCropParameters()
+            )
+        }
+    }
+
+    private func startExport(operation: ExportOperationKind, jobsBuilder: () -> [FFmpegJob]) {
+        guard splitCoordinator == nil else {
             return
         }
 
@@ -1197,41 +1313,53 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             }
 
             try FileManager.default.createDirectory(at: outputDirectoryURL, withIntermediateDirectories: true)
-            refreshGeneratedJobs()
+            let jobs = jobsBuilder()
+            guard !jobs.isEmpty else {
+                showError(operation.emptyJobsErrorMessage)
+                return
+            }
 
             let coordinator = SplitCoordinator(
-                jobs: generatedJobs,
+                jobs: jobs,
                 concurrency: currentConcurrency(),
-                runtime: runtime
+                runtime: runtime,
+                workerWindowTitlePrefix: operation.workerWindowTitlePrefix
             )
             coordinator.delegate = self
             splitCoordinator = coordinator
+            activeExportOperation = operation
 
             parseButton.isEnabled = false
             splitButton.isEnabled = false
-            statusLabel.stringValue = "开始分解..."
+            validateTransitionsButton.isEnabled = false
+            statusLabel.stringValue = operation.initialStatusText
             coordinator.start()
         } catch {
-            statusLabel.stringValue = "分解启动失败。"
+            activeExportOperation = nil
+            statusLabel.stringValue = operation.launchFailureStatusText
             showError(error.localizedDescription)
         }
     }
 
     func splitCoordinatorDidStart(totalJobs: Int, workerCount: Int) {
-        statusLabel.stringValue = "开始分解：\(totalJobs) 个任务，\(workerCount) 个并发窗口。"
+        let operation = activeExportOperation ?? .split
+        statusLabel.stringValue = operation.startStatusText(totalJobs: totalJobs, workerCount: workerCount)
     }
 
     func splitCoordinatorDidUpdate(completed: Int, failed: Int, total: Int) {
-        statusLabel.stringValue = "分解中：完成 \(completed) / \(total)，失败 \(failed)。"
+        let operation = activeExportOperation ?? .split
+        statusLabel.stringValue = operation.updateStatusText(completed: completed, failed: failed, total: total)
     }
 
     func splitCoordinatorDidFinish(completed: Int, failed: Int, total: Int) {
+        let operation = activeExportOperation ?? .split
         splitCoordinator = nil
+        activeExportOperation = nil
         parseButton.isEnabled = true
         updateSplitButtonState()
-        statusLabel.stringValue = "分解完成：成功 \(completed) / \(total)，失败 \(failed)。"
+        statusLabel.stringValue = operation.finishStatusText(completed: completed, failed: failed, total: total)
         if failed > 0 {
-            showError("共有 \(failed) 个 ffmpeg 任务失败，请检查子窗口日志。")
+            showError(operation.failureAlertMessage(failed: failed))
         }
     }
 

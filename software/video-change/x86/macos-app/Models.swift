@@ -167,6 +167,8 @@ struct FFmpegJob {
     }
 }
 
+private let transitionValidationPaddingSeconds = 0.5
+
 func formatHMS(_ seconds: Double) -> String {
     let bounded = max(0.0, seconds)
     let whole = Int(bounded)
@@ -286,6 +288,33 @@ func buildJobs(segments: [EditableSegment], videoURL: URL, outputDirectoryURL: U
             outputURL: outputDirectoryURL.appendingPathComponent(fileName),
             start: segment.start,
             duration: segment.duration,
+            crop: crop
+        )
+    }
+}
+
+func buildTransitionValidationJobs(payload: DetectorPayload, videoURL: URL, outputDirectoryURL: URL, prefix: String, crop: CropParameters?) -> [FFmpegJob] {
+    let inputExtension = videoURL.pathExtension
+    let fallbackPrefix = videoURL.deletingPathExtension().lastPathComponent
+    let safePrefix = sanitizePrefix(prefix, fallback: fallbackPrefix)
+    let validationPrefix = "\(safePrefix)-transition"
+
+    return payload.events.enumerated().compactMap { offset, event in
+        let start = max(0.0, event.start - transitionValidationPaddingSeconds)
+        let end = min(payload.duration, event.end + transitionValidationPaddingSeconds)
+        let duration = end - start
+        guard duration > 0 else {
+            return nil
+        }
+
+        let outputIndex = offset + 1
+        let fileName = makeOutputFileName(prefix: validationPrefix, index: outputIndex, pathExtension: inputExtension)
+        return FFmpegJob(
+            index: outputIndex,
+            inputURL: videoURL,
+            outputURL: outputDirectoryURL.appendingPathComponent(fileName),
+            start: start,
+            duration: duration,
             crop: crop
         )
     }

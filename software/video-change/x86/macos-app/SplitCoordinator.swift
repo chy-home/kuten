@@ -19,12 +19,19 @@ final class SplitCoordinator {
 
     weak var delegate: SplitCoordinatorDelegate?
 
-    init(jobs: [FFmpegJob], concurrency: Int, runtime: RuntimeConfiguration) {
+    init(jobs: [FFmpegJob], concurrency: Int, runtime: RuntimeConfiguration, workerWindowTitlePrefix: String = "分解任务") {
         self.jobs = jobs
         self.runtime = runtime
 
         let workerCount = max(1, min(concurrency, max(1, jobs.count)))
-        self.workers = (1...workerCount).map { WorkerRunner(workerIndex: $0, totalWorkers: workerCount, runtime: runtime) }
+        self.workers = (1...workerCount).map {
+            WorkerRunner(
+                workerIndex: $0,
+                totalWorkers: workerCount,
+                runtime: runtime,
+                windowTitlePrefix: workerWindowTitlePrefix
+            )
+        }
         for worker in self.workers {
             worker.onCompletion = { [weak self, weak worker] success in
                 guard let self, let worker else {
@@ -107,8 +114,12 @@ final class WorkerRunner: NSObject {
     private var logPipe: Pipe?
     var onCompletion: ((Bool) -> Void)?
 
-    init(workerIndex: Int, totalWorkers: Int, runtime: RuntimeConfiguration) {
-        self.windowController = WorkerWindowController(workerIndex: workerIndex, totalWorkers: totalWorkers)
+    init(workerIndex: Int, totalWorkers: Int, runtime: RuntimeConfiguration, windowTitlePrefix: String) {
+        self.windowController = WorkerWindowController(
+            workerIndex: workerIndex,
+            totalWorkers: totalWorkers,
+            windowTitlePrefix: windowTitlePrefix
+        )
         self.runtime = runtime
     }
 

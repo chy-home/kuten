@@ -5,14 +5,14 @@ final class WorkerWindowController: NSWindowController {
     private let detailLabel = NSTextField(labelWithString: "")
     private let textView = NSTextView()
 
-    init(workerIndex: Int, totalWorkers: Int) {
+    init(workerIndex: Int, totalWorkers: Int, windowTitlePrefix: String = "分解任务") {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 760, height: 420),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "分解任务 \(workerIndex)/\(totalWorkers)"
+        window.title = "\(windowTitlePrefix) \(workerIndex)/\(totalWorkers)"
         super.init(window: window)
         buildUI()
     }
