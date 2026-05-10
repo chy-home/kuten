@@ -248,3 +248,9 @@ If fade behavior is changed, verify both:
 
 - the `1.5s` fade no longer leaves visible trailing transition content
 - normal content is not excessively removed on the left side
+
+
+
+## 重新编译
+- 1. 重建 .venv：python3 -m venv .venv && .venv/bin/pip install numpy scenedetect
+- 2. 重新编译：./build_macos_app.sh
