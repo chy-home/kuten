@@ -37,11 +37,10 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     private var editableSegments: [EditableSegment] = []
     private var generatedJobs: [FFmpegJob] = []
     private var splitCoordinator: SplitCoordinator?
-    private var contentSplitView: NSSplitView?
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 680),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -139,22 +138,26 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         let resultPanel = buildResultPanel()
         let scriptPanel = buildScriptPanel()
 
-        let contentSplit = NSSplitView()
-        contentSplit.isVertical = true
-        contentSplit.dividerStyle = .thin
-        contentSplit.translatesAutoresizingMaskIntoConstraints = false
-        contentSplit.addArrangedSubview(resultPanel)
-        contentSplit.addArrangedSubview(scriptPanel)
-        contentSplit.setPosition(500, ofDividerAt: 0)
-        self.contentSplitView = contentSplit
+        controlsPanel.translatesAutoresizingMaskIntoConstraints = false
+        resultPanel.translatesAutoresizingMaskIntoConstraints = false
+        scriptPanel.translatesAutoresizingMaskIntoConstraints = false
+        controlsPanel.widthAnchor.constraint(equalToConstant: 560).isActive = true
+        resultPanel.widthAnchor.constraint(equalToConstant: 520).isActive = true
+        scriptPanel.widthAnchor.constraint(equalToConstant: 420).isActive = true
+
+        let contentRow = NSStackView(views: [controlsPanel, resultPanel, scriptPanel])
+        contentRow.orientation = .horizontal
+        contentRow.spacing = 18
+        contentRow.alignment = .top
+        contentRow.distribution = .fill
+        contentRow.translatesAutoresizingMaskIntoConstraints = false
 
         let rootStack = NSStackView()
         rootStack.orientation = .vertical
         rootStack.spacing = 18
         rootStack.translatesAutoresizingMaskIntoConstraints = false
         rootStack.addArrangedSubview(headerStack)
-        rootStack.addArrangedSubview(controlsPanel)
-        rootStack.addArrangedSubview(contentSplit)
+        rootStack.addArrangedSubview(contentRow)
 
         let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -176,9 +179,11 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             rootStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor, constant: -22),
             rootStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor, constant: 22),
             rootStack.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor, constant: -22),
-            rootStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 980),
-            controlsPanel.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
-            contentSplit.heightAnchor.constraint(greaterThanOrEqualToConstant: 340),
+            rootStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 1560),
+            contentRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 560),
+            controlsPanel.heightAnchor.constraint(greaterThanOrEqualToConstant: 560),
+            resultPanel.heightAnchor.constraint(greaterThanOrEqualToConstant: 560),
+            scriptPanel.heightAnchor.constraint(greaterThanOrEqualToConstant: 560),
         ])
     }
 
