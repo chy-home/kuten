@@ -26,6 +26,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     private let eventTableView = NSTableView()
     private let segmentTableView = NSTableView()
     private let segmentMasterCheckbox = NSButton(checkboxWithTitle: "全选", target: nil, action: nil)
+    private let addSegmentButton = NSButton(title: "追加行", target: nil, action: nil)
 
     private var selectedVideoURL: URL?
     private var selectedOutputDirectoryURL: URL?
@@ -37,16 +38,17 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     private var editableSegments: [EditableSegment] = []
     private var generatedJobs: [FFmpegJob] = []
     private var splitCoordinator: SplitCoordinator?
+    private var hoveredManualSegmentRow: Int?
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 680),
+            contentRect: NSRect(x: 0, y: 0, width: 860, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Video Change"
-        window.minSize = NSSize(width: 760, height: 520)
+        window.minSize = NSSize(width: 760, height: 560)
         super.init(window: window)
         buildUI()
         updateNamingPreview()
@@ -141,9 +143,9 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         controlsPanel.translatesAutoresizingMaskIntoConstraints = false
         resultPanel.translatesAutoresizingMaskIntoConstraints = false
         scriptPanel.translatesAutoresizingMaskIntoConstraints = false
-        controlsPanel.widthAnchor.constraint(equalToConstant: 560).isActive = true
-        resultPanel.widthAnchor.constraint(equalToConstant: 520).isActive = true
-        scriptPanel.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        controlsPanel.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        resultPanel.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        scriptPanel.widthAnchor.constraint(equalToConstant: 392).isActive = true
 
         let contentRow = NSStackView(views: [controlsPanel, resultPanel, scriptPanel])
         contentRow.orientation = .horizontal
@@ -179,7 +181,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             rootStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor, constant: -22),
             rootStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor, constant: 22),
             rootStack.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor, constant: -22),
-            rootStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 1560),
+            rootStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 1352),
             contentRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 560),
             controlsPanel.heightAnchor.constraint(greaterThanOrEqualToConstant: 560),
             resultPanel.heightAnchor.constraint(greaterThanOrEqualToConstant: 560),
@@ -294,7 +296,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         panel.translatesAutoresizingMaskIntoConstraints = false
 
         let title = makeSectionTitle("分解片段")
-        let subtitle = NSTextField(labelWithString: "仅显示开始时间、结束时间；支持手动修改和禁用。")
+        let subtitle = NSTextField(labelWithString: "显示启用、开始时间、结束时间；支持手动修改和禁用。")
         subtitle.font = .systemFont(ofSize: 13)
         subtitle.textColor = .secondaryLabelColor
 
@@ -302,9 +304,15 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         segmentMasterCheckbox.target = self
         segmentMasterCheckbox.action = #selector(segmentMasterCheckboxChanged(_:))
 
+        addSegmentButton.bezelStyle = .rounded
+        addSegmentButton.font = .systemFont(ofSize: 13, weight: .medium)
+        addSegmentButton.target = self
+        addSegmentButton.action = #selector(addSegmentRow(_:))
+        addSegmentButton.bezelColor = .systemGreen
+
         let scrollView = makeTableScrollView(for: segmentTableView)
 
-        let titleRow = NSStackView(views: [title, segmentMasterCheckbox])
+        let titleRow = NSStackView(views: [title, addSegmentButton, segmentMasterCheckbox])
         titleRow.orientation = .horizontal
         titleRow.spacing = 12
         titleRow.alignment = .centerY
@@ -413,17 +421,17 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         eventTableView.usesAlternatingRowBackgroundColors = true
         eventTableView.rowHeight = 34
         eventTableView.intercellSpacing = NSSize(width: 8, height: 4)
-        eventTableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        eventTableView.columnAutoresizingStyle = .noColumnAutoresizing
         eventTableView.delegate = self
         eventTableView.dataSource = self
 
         let columns: [(String, String, CGFloat)] = [
-            ("index", "#", 52),
-            ("type", "类型", 110),
-            ("start", "开始时间", 130),
-            ("end", "结束时间", 130),
-            ("duration", "时长", 110),
-            ("source", "来源", 220),
+            ("index", "#", 44),
+            ("type", "类型", 72),
+            ("start", "开始时间", 118),
+            ("end", "结束时间", 118),
+            ("duration", "时长", 76),
+            ("source", "来源", 140),
         ]
 
         for (identifier, title, width) in columns {
@@ -431,6 +439,8 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             column.title = title
             column.width = width
             column.minWidth = width
+            column.maxWidth = 480
+            column.resizingMask = .userResizingMask
             eventTableView.addTableColumn(column)
         }
     }
@@ -451,15 +461,15 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         segmentTableView.usesAlternatingRowBackgroundColors = true
         segmentTableView.rowHeight = 34
         segmentTableView.intercellSpacing = NSSize(width: 8, height: 4)
-        segmentTableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        segmentTableView.columnAutoresizingStyle = .noColumnAutoresizing
         segmentTableView.delegate = self
         segmentTableView.dataSource = self
         segmentTableView.allowsMultipleSelection = true
 
         let columns: [(String, String, CGFloat)] = [
-            ("enabled", "启用", 70),
-            ("start", "开始时间", 150),
-            ("end", "结束时间", 150),
+            ("enabled", "启用", 62),
+            ("start", "开始时间", 128),
+            ("end", "结束时间", 128),
         ]
 
         for (identifier, title, width) in columns {
@@ -467,6 +477,8 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             column.title = title
             column.width = width
             column.minWidth = width
+            column.maxWidth = 320
+            column.resizingMask = .userResizingMask
             segmentTableView.addTableColumn(column)
         }
     }
@@ -714,18 +726,24 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     }
 
     private func refreshGeneratedJobs() {
-        guard let detectorPayload, let selectedVideoURL, let outputDirectoryURL = resolvedOutputDirectoryURL() else {
+        if editableSegments.isEmpty, let detectorPayload {
+            editableSegments = buildEditableSegments(payload: detectorPayload)
+        }
+
+        guard let selectedVideoURL, let outputDirectoryURL = resolvedOutputDirectoryURL() else {
             generatedJobs = []
-            editableSegments = []
             segmentTableView.reloadData()
             updateSegmentMasterCheckboxState()
             updateSplitButtonState()
             updateNamingPreview()
+            if let detectorPayload {
+                summaryLabel.stringValue = "换场 \(detectorPayload.events.count) 个，保留片段 \(editableSegments.count) 个"
+            } else if !editableSegments.isEmpty {
+                summaryLabel.stringValue = "手动片段 \(editableSegments.count) 个"
+            } else {
+                summaryLabel.stringValue = "等待解析"
+            }
             return
-        }
-
-        if editableSegments.isEmpty {
-            editableSegments = buildEditableSegments(payload: detectorPayload)
         }
 
         generatedJobs = buildJobs(
@@ -736,7 +754,11 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             crop: currentCropParameters()
         )
 
-        summaryLabel.stringValue = "换场 \(detectorPayload.events.count) 个，保留片段 \(detectorPayload.keepSegments.count) 个"
+        if let detectorPayload {
+            summaryLabel.stringValue = "换场 \(detectorPayload.events.count) 个，保留片段 \(editableSegments.count) 个"
+        } else {
+            summaryLabel.stringValue = "手动片段 \(editableSegments.count) 个"
+        }
         eventTableView.reloadData()
         segmentTableView.reloadData()
         updateSegmentMasterCheckboxState()
@@ -747,6 +769,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     private func updateSplitButtonState() {
         splitButton.isEnabled = splitCoordinator == nil && !generatedJobs.isEmpty
+        addSegmentButton.isEnabled = splitCoordinator == nil
     }
 
     private func updateNamingPreview() {
@@ -765,6 +788,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         detectorPayload = nil
         editableSegments = []
         generatedJobs = []
+        hoveredManualSegmentRow = nil
         summaryLabel.stringValue = "等待解析"
         eventTableView.reloadData()
         segmentTableView.reloadData()
@@ -813,6 +837,41 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         for index in editableSegments.indices {
             editableSegments[index].isEnabled = shouldEnableAll
         }
+        rebuildJobsFromEditableSegments()
+    }
+
+    @objc private func addSegmentRow(_ sender: Any?) {
+        let nextIndex = (editableSegments.map(\.index).max() ?? -1) + 1
+        let maxDuration = detectorPayload?.duration
+        let start = min(maxDuration ?? .greatestFiniteMagnitude, max(0.0, editableSegments.last?.end ?? 0.0))
+        let rawEnd = min(maxDuration ?? .greatestFiniteMagnitude, start + 1.0)
+        let end = rawEnd > start ? rawEnd : start + 0.001
+
+        editableSegments.append(
+            EditableSegment(
+                index: nextIndex,
+                isEnabled: true,
+                start: start,
+                end: end,
+                isManual: true
+            )
+        )
+        rebuildJobsFromEditableSegments()
+
+        let row = editableSegments.count - 1
+        if row >= 0 {
+            segmentTableView.scrollRowToVisible(row)
+            segmentTableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+    }
+
+    @objc private func deleteManualSegmentRow(_ sender: NSButton) {
+        let row = sender.tag
+        guard row >= 0, row < editableSegments.count, editableSegments[row].isManual else {
+            return
+        }
+        editableSegments.remove(at: row)
+        hoveredManualSegmentRow = nil
         rebuildJobsFromEditableSegments()
     }
 
@@ -1195,6 +1254,31 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         }
     }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        guard tableView == segmentTableView else {
+            return nil
+        }
+
+        let identifier = NSUserInterfaceItemIdentifier("segment-row-view")
+        let rowView: HoverAwareTableRowView
+        if let reused = tableView.makeView(withIdentifier: identifier, owner: self) as? HoverAwareTableRowView {
+            rowView = reused
+        } else {
+            rowView = HoverAwareTableRowView()
+            rowView.identifier = identifier
+        }
+
+        rowView.rowIndex = row
+        rowView.hoverChanged = { [weak self] hoveredRow, isHovered in
+            guard let self else { return }
+            let nextHoveredRow = isHovered ? hoveredRow : (self.hoveredManualSegmentRow == hoveredRow ? nil : self.hoveredManualSegmentRow)
+            guard self.hoveredManualSegmentRow != nextHoveredRow else { return }
+            self.hoveredManualSegmentRow = nextHoveredRow
+            self.segmentTableView.reloadData(forRowIndexes: IndexSet(integersIn: 0..<self.editableSegments.count), columnIndexes: IndexSet(integer: 2))
+        }
+        return rowView
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let identifier = tableColumn?.identifier else {
             return nil
@@ -1237,6 +1321,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
         if tableView == segmentTableView {
             let segment = editableSegments[row]
+            let manualBackgroundColor = NSColor.systemGreen.withAlphaComponent(0.14)
 
             switch identifier.rawValue {
             case "enabled":
@@ -1250,13 +1335,27 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                 }
                 button.tag = row
                 button.state = segment.isEnabled ? .on : .off
+                if let cell = button.superview {
+                    cell.wantsLayer = true
+                    cell.layer?.backgroundColor = segment.isManual ? manualBackgroundColor.cgColor : NSColor.clear.cgColor
+                }
                 return button
             case "start", "end":
+                let isEndColumn = identifier.rawValue == "end"
+                let containerIdentifier = NSUserInterfaceItemIdentifier("segment-container-\(identifier.rawValue)")
                 let fieldIdentifier = NSUserInterfaceItemIdentifier("segment-\(identifier.rawValue)")
+                let container: NSView
                 let field: SegmentTimeField
-                if let reused = tableView.makeView(withIdentifier: fieldIdentifier, owner: nil) as? SegmentTimeField {
-                    field = reused
+                let deleteButton: NSButton?
+                if let reused = tableView.makeView(withIdentifier: containerIdentifier, owner: nil) {
+                    container = reused
+                    field = reused.subviews.compactMap { $0 as? SegmentTimeField }.first ?? SegmentTimeField(frame: .zero)
+                    deleteButton = reused.subviews.compactMap { $0 as? NSButton }.first
                 } else {
+                    container = NSView(frame: .zero)
+                    container.identifier = containerIdentifier
+                    container.translatesAutoresizingMaskIntoConstraints = false
+
                     field = SegmentTimeField(frame: .zero)
                     field.identifier = fieldIdentifier
                     field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -1265,12 +1364,49 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                     field.delegate = self
                     field.target = self
                     field.action = #selector(segmentTimeFieldChanged(_:))
+                    field.translatesAutoresizingMaskIntoConstraints = false
+                    container.addSubview(field)
+
+                    if isEndColumn {
+                        let button = NSButton(title: "✕", target: self, action: #selector(deleteManualSegmentRow(_:)))
+                        button.isBordered = false
+                        button.font = .systemFont(ofSize: 12, weight: .bold)
+                        button.contentTintColor = .systemRed
+                        button.translatesAutoresizingMaskIntoConstraints = false
+                        button.setButtonType(.momentaryPushIn)
+                        container.addSubview(button)
+                        deleteButton = button
+
+                        NSLayoutConstraint.activate([
+                            field.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                            field.topAnchor.constraint(equalTo: container.topAnchor),
+                            field.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+                            field.trailingAnchor.constraint(equalTo: button.leadingAnchor, constant: -4),
+                            button.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -2),
+                            button.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                            button.widthAnchor.constraint(equalToConstant: 16),
+                        ])
+                    } else {
+                        deleteButton = nil
+                        NSLayoutConstraint.activate([
+                            field.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                            field.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                            field.topAnchor.constraint(equalTo: container.topAnchor),
+                            field.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+                        ])
+                    }
                 }
                 field.segmentRow = row
                 field.kind = identifier.rawValue == "start" ? .start : .end
                 field.stringValue = formatHMS(identifier.rawValue == "start" ? segment.start : segment.end)
-                field.textColor = segment.isEnabled ? .labelColor : .secondaryLabelColor
-                return field
+                field.textColor = .labelColor
+                field.drawsBackground = true
+                field.backgroundColor = segment.isManual ? manualBackgroundColor : .textBackgroundColor
+                if let deleteButton {
+                    deleteButton.tag = row
+                    deleteButton.isHidden = !(segment.isManual && hoveredManualSegmentRow == row)
+                }
+                return container
             default:
                 return nil
             }

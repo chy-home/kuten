@@ -149,3 +149,28 @@ final class SegmentTimeField: NSTextField {
     var segmentRow: Int = -1
     var kind: Kind = .start
 }
+
+final class HoverAwareTableRowView: NSTableRowView {
+    var rowIndex: Int = -1
+    var hoverChanged: ((Int, Bool) -> Void)?
+    private var trackingAreaRef: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect]
+        let area = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingAreaRef = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hoverChanged?(rowIndex, true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoverChanged?(rowIndex, false)
+    }
+}

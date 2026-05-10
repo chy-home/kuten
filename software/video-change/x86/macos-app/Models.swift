@@ -84,6 +84,7 @@ struct EditableSegment {
     var isEnabled: Bool
     var start: Double
     var end: Double
+    var isManual: Bool
 
     var duration: Double {
         max(0.0, end - start)
@@ -263,7 +264,8 @@ func buildEditableSegments(payload: DetectorPayload) -> [EditableSegment] {
             index: segment.index,
             isEnabled: true,
             start: segment.start,
-            end: segment.end
+            end: segment.end,
+            isManual: false
         )
     }
 }
