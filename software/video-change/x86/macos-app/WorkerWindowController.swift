@@ -1,18 +1,28 @@
 import AppKit
 
 final class WorkerWindowController: NSWindowController {
+    private static let workerWindowWidth: CGFloat = 520
+    private static let workerWindowHeight: CGFloat = 300
+    private static let workerWindowInset: CGFloat = 22
+    private static let workerWindowGap: CGFloat = 18
+
     private let statusLabel = NSTextField(labelWithString: "等待任务")
     private let detailLabel = NSTextField(labelWithString: "")
     private let textView = NSTextView()
+    private let workerIndex: Int
+    private let totalWorkers: Int
 
     init(workerIndex: Int, totalWorkers: Int, windowTitlePrefix: String = "分解任务") {
+        self.workerIndex = workerIndex
+        self.totalWorkers = totalWorkers
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: Self.workerWindowWidth, height: Self.workerWindowHeight),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "\(windowTitlePrefix) \(workerIndex)/\(totalWorkers)"
+        window.minSize = NSSize(width: Self.workerWindowWidth, height: Self.workerWindowHeight)
         super.init(window: window)
         buildUI()
     }
@@ -73,6 +83,7 @@ final class WorkerWindowController: NSWindowController {
 
     func prepareForDisplay() {
         showWindow(nil)
+        tileWindowIfNeeded()
         window?.orderFrontRegardless()
     }
 
@@ -100,5 +111,22 @@ final class WorkerWindowController: NSWindowController {
         let attributed = NSAttributedString(string: text)
         textView.textStorage?.append(attributed)
         textView.scrollToEndOfDocument(nil)
+    }
+
+    private func tileWindowIfNeeded() {
+        guard let window, let screen = NSScreen.main ?? window.screen else {
+            return
+        }
+
+        let visibleFrame = screen.visibleFrame
+        let availableWidth = max(Self.workerWindowWidth, visibleFrame.width - Self.workerWindowInset * 2)
+        let columns = max(1, Int((availableWidth + Self.workerWindowGap) / (Self.workerWindowWidth + Self.workerWindowGap)))
+        let zeroBasedIndex = max(0, workerIndex - 1)
+        let column = zeroBasedIndex % columns
+        let row = zeroBasedIndex / columns
+
+        let x = visibleFrame.minX + Self.workerWindowInset + CGFloat(column) * (Self.workerWindowWidth + Self.workerWindowGap)
+        let y = visibleFrame.maxY - Self.workerWindowInset - Self.workerWindowHeight - CGFloat(row) * (Self.workerWindowHeight + Self.workerWindowGap)
+        window.setFrame(NSRect(x: x, y: max(visibleFrame.minY + Self.workerWindowInset, y), width: Self.workerWindowWidth, height: Self.workerWindowHeight), display: false)
     }
 }

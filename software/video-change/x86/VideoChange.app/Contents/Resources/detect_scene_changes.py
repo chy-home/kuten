@@ -62,15 +62,6 @@ FADE_REMOVAL_PROFILES: dict[str, FadeRemovalProfile] = {
         stable_luma_delta=0.45,
         stable_run_frames=2,
     ),
-    "extreme": FadeRemovalProfile(
-        name="extreme",
-        settle_backtrack_seconds=0.32,
-        settle_forward_seconds=0.44,
-        low_diff_threshold=0.0165,
-        stable_diff_threshold=0.0185,
-        stable_luma_delta=0.38,
-        stable_run_frames=3,
-    ),
 }
 
 
@@ -794,7 +785,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--fade-removal-profile",
         choices=sorted(FADE_REMOVAL_PROFILES.keys()),
-        default="aggressive",
+        default="standard",
         help="How aggressively fade transitions are removed",
     )
     parser.add_argument("--fade-left-padding-seconds", type=float, default=None, help="Additional fade removal before fade start")
@@ -812,10 +803,9 @@ def main(argv: list[str]) -> int:
 
     fade_profile = resolve_fade_removal_profile(args.fade_removal_profile)
     default_padding = {
-        "conservative": (0.04, 0.12),
-        "standard": (0.08, 0.18),
-        "aggressive": (0.12, 0.24),
-        "extreme": (0.16, 0.32),
+        "conservative": (0.3, 0.3),
+        "standard": (0.5, 0.5),
+        "aggressive": (1.0, 1.0),
     }
     default_left_padding, default_right_padding = default_padding[fade_profile.name]
     fade_left_padding_seconds = default_left_padding if args.fade_left_padding_seconds is None else max(0.0, args.fade_left_padding_seconds)

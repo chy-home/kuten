@@ -2,6 +2,23 @@ import AppKit
 import UniformTypeIdentifiers
 
 final class MainWindowController: NSWindowController, NSTextFieldDelegate, SplitCoordinatorDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    private static let defaultConcurrency = 5
+    private static let fieldLabelColumnWidth: CGFloat = 68
+    private static let outputDirectoryDefaultsKey = "VideoChange.lastOutputDirectoryPath"
+
+    private enum PrefixLensMode: String, CaseIterable {
+        case firstPerson = "第一视角"
+        case thirdPerson = "第三视角"
+        case selfie = "自拍"
+        case fixed = "固定视角"
+        case suggestive = "擦边"
+    }
+
+    private enum PrefixFaceMode: String, CaseIterable {
+        case noFace = "无脸"
+        case showFace = "露脸"
+    }
+
     private enum ExportOperationKind {
         case split
         case validateTransitions
@@ -27,7 +44,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         var emptyJobsErrorMessage: String {
             switch self {
             case .split:
-                return "当前没有可执行的 ffmpeg 任务，请先点击“解析”。"
+                return "当前分解片段无法生成可执行的 ffmpeg 任务，请检查开始时间、结束时间，或先点击“解析”获取视频时长。"
             case .validateTransitions:
                 return "当前没有可导出的换场片段，请先点击“解析”。"
             }
@@ -79,24 +96,27 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         }
     }
 
-    private let headerTitleLabel = NSTextField(labelWithString: "Video Change")
-    private let headerSubtitleLabel = NSTextField(labelWithString: "识别换场，生成脚本，并按并发窗口执行分解。")
-
     private let videoPathField = DroppablePathField(acceptKind: .file)
     private let outputDirectoryField = DroppablePathField(acceptKind: .directory)
-    private let prefixField = NSTextField()
+    private let customPrefixField = NSTextField()
     private let concurrencyField = NSTextField()
     private let concurrencyStepper = NSStepper()
     private let skipStartField = NSTextField()
     private let cropField = NSTextField()
     private let fadeStrategyStack = NSStackView()
+    private let prefixLensModeStack = NSStackView()
+    private let prefixFaceModeStack = NSStackView()
+    private let prefixDateLabel = NSTextField(labelWithString: "")
     private var fadeStrategyButtons: [FadeRemovalStrategy: NSButton] = [:]
     private var fadeLeftFields: [FadeRemovalStrategy: NSTextField] = [:]
     private var fadeRightFields: [FadeRemovalStrategy: NSTextField] = [:]
+    private var prefixLensButtons: [PrefixLensMode: NSButton] = [:]
+    private var prefixFaceButtons: [PrefixFaceMode: NSButton] = [:]
     private let namingPreviewLabel = NSTextField(labelWithString: "未选择视频")
     private let statusLabel = NSTextField(labelWithString: "请选择视频文件，或直接拖入。")
 
     private let parseButton = NSButton(title: "解析", target: nil, action: nil)
+    private let stopButton = NSButton(title: "停止", target: nil, action: nil)
     private let splitButton = NSButton(title: "分解", target: nil, action: nil)
     private let validateTransitionsButton = NSButton(title: "验证导出", target: nil, action: nil)
 
@@ -118,6 +138,9 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     private var splitCoordinator: SplitCoordinator?
     private var activeExportOperation: ExportOperationKind?
     private var hoveredManualSegmentRow: Int?
+    private var detectorCancellation: DetectorCancellation?
+    private var workerWindowControllers: [WorkerWindowController] = []
+    private var probedVideoDuration: Double?
 
     init() {
         let window = NSWindow(
@@ -127,9 +150,13 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             defer: false
         )
         window.title = "Video Change"
+        if #available(macOS 13.0, *) {
+            window.subtitle = "识别换场，生成脚本，并按并发窗口执行分解。"
+        }
         window.minSize = NSSize(width: 760, height: 560)
         super.init(window: window)
         buildUI()
+        restorePersistedOutputDirectory()
         updateNamingPreview()
         updateSplitButtonState()
     }
@@ -147,20 +174,16 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         contentView.wantsLayer = true
         contentView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-        headerTitleLabel.font = .systemFont(ofSize: 34, weight: .bold)
-        headerSubtitleLabel.font = .systemFont(ofSize: 15, weight: .regular)
-        headerSubtitleLabel.textColor = .secondaryLabelColor
-
         configureInputField(videoPathField, placeholder: "拖入视频文件，或点击右侧按钮选择")
         configureInputField(outputDirectoryField, placeholder: "默认使用视频所在目录，也可拖入文件夹或手工输入")
         outputDirectoryField.isEditable = true
         outputDirectoryField.isSelectable = true
 
-        prefixField.placeholderString = "输出前缀，例如 my-video"
-        prefixField.font = .systemFont(ofSize: 15)
-        prefixField.delegate = self
+        customPrefixField.placeholderString = "用户自定义内容"
+        customPrefixField.font = .systemFont(ofSize: 15)
+        customPrefixField.delegate = self
 
-        concurrencyField.stringValue = "3"
+        concurrencyField.stringValue = "\(Self.defaultConcurrency)"
         concurrencyField.alignment = .center
         concurrencyField.font = .systemFont(ofSize: 15, weight: .medium)
         concurrencyField.delegate = self
@@ -169,18 +192,30 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
         concurrencyStepper.minValue = 1
         concurrencyStepper.maxValue = 12
-        concurrencyStepper.integerValue = 3
+        concurrencyStepper.integerValue = Self.defaultConcurrency
         concurrencyStepper.increment = 1
         concurrencyStepper.target = self
         concurrencyStepper.action = #selector(concurrencyStepperChanged(_:))
 
         parseButton.bezelStyle = .rounded
         parseButton.font = .systemFont(ofSize: 15, weight: .semibold)
+        parseButton.isBordered = true
+        parseButton.bezelColor = .systemBlue
         parseButton.target = self
         parseButton.action = #selector(parseVideo(_:))
 
+        stopButton.bezelStyle = .rounded
+        stopButton.font = .systemFont(ofSize: 15, weight: .semibold)
+        stopButton.isBordered = true
+        stopButton.bezelColor = .systemRed
+        stopButton.target = self
+        stopButton.action = #selector(stopAllProcessing(_:))
+        stopButton.isEnabled = false
+
         splitButton.bezelStyle = .rounded
         splitButton.font = .systemFont(ofSize: 15, weight: .semibold)
+        splitButton.isBordered = true
+        splitButton.bezelColor = .systemGreen
         splitButton.target = self
         splitButton.action = #selector(splitVideo(_:))
 
@@ -192,6 +227,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         configureSmallField(skipStartField, placeholder: "0")
         skipStartField.stringValue = "0"
         configureLargeField(cropField, placeholder: "1728:910:0:85")
+        configurePrefixControls()
         configureFadeStrategyControls()
 
         statusLabel.font = .systemFont(ofSize: 14)
@@ -202,6 +238,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         namingPreviewLabel.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         namingPreviewLabel.textColor = .secondaryLabelColor
         namingPreviewLabel.lineBreakMode = .byTruncatingMiddle
+        namingPreviewLabel.toolTip = namingPreviewLabel.stringValue
 
         videoPathField.onURLDropped = { [weak self] url in
             self?.applyVideoURL(url)
@@ -213,13 +250,6 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         configureEventTable()
         configureSegmentTable()
 
-        let headerStack = NSStackView()
-        headerStack.orientation = .vertical
-        headerStack.spacing = 6
-        headerStack.translatesAutoresizingMaskIntoConstraints = false
-        headerStack.addArrangedSubview(headerTitleLabel)
-        headerStack.addArrangedSubview(headerSubtitleLabel)
-
         let controlsPanel = buildControlsPanel()
         let resultPanel = buildResultPanel()
         let scriptPanel = buildScriptPanel()
@@ -227,9 +257,15 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         controlsPanel.translatesAutoresizingMaskIntoConstraints = false
         resultPanel.translatesAutoresizingMaskIntoConstraints = false
         scriptPanel.translatesAutoresizingMaskIntoConstraints = false
-        controlsPanel.widthAnchor.constraint(equalToConstant: 420).isActive = true
-        resultPanel.widthAnchor.constraint(equalToConstant: 460).isActive = true
-        scriptPanel.widthAnchor.constraint(equalToConstant: 392).isActive = true
+        controlsPanel.widthAnchor.constraint(equalToConstant: 500).isActive = true
+        resultPanel.widthAnchor.constraint(greaterThanOrEqualToConstant: 516).isActive = true
+        scriptPanel.widthAnchor.constraint(equalToConstant: 400).isActive = true
+        controlsPanel.setContentHuggingPriority(.required, for: .horizontal)
+        controlsPanel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        resultPanel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        resultPanel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        scriptPanel.setContentHuggingPriority(.required, for: .horizontal)
+        scriptPanel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let contentRow = NSStackView(views: [controlsPanel, resultPanel, scriptPanel])
         contentRow.orientation = .horizontal
@@ -240,9 +276,8 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
         let rootStack = NSStackView()
         rootStack.orientation = .vertical
-        rootStack.spacing = 18
+        rootStack.spacing = 0
         rootStack.translatesAutoresizingMaskIntoConstraints = false
-        rootStack.addArrangedSubview(headerStack)
         rootStack.addArrangedSubview(contentRow)
 
         let scrollView = NSScrollView()
@@ -263,7 +298,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             rootStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor, constant: 22),
             rootStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor, constant: -22),
-            rootStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor, constant: 22),
+            rootStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor, constant: 12),
             rootStack.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor, constant: -22),
             rootStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 1352),
             contentRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 560),
@@ -298,21 +333,21 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         let formGrid = NSGridView(views: [
             [makeFieldLabel("视频文件"), makeHorizontalRow([videoPathField, chooseVideoButton])],
             [makeFieldLabel("输出目录"), makeHorizontalRow([outputDirectoryField, chooseOutputButton, useVideoDirectoryButton])],
-            [makeFieldLabel("输出前缀"), makeHorizontalRow([prefixField, makeHintLabel("输出文件名格式：前缀-01、前缀-02")])],
+            [makeFieldLabel("输出前缀"), buildPrefixEditor()],
             [makeFieldLabel("画面裁剪"), cropRow],
             [makeFieldLabel("跳过检测"), skipRow],
             [makeFieldLabel("Fade 删除"), fadeStrategyRow],
             [makeFieldLabel("命名预览"), namingPreviewLabel],
-            [makeFieldLabel("并发窗口"), makeHorizontalRow([concurrencyField, concurrencyStepper, makeHintLabel("默认 3 个子窗口并发执行")])],
+            [makeFieldLabel("并发窗口"), makeHorizontalRow([concurrencyField, concurrencyStepper, makeHintLabel("默认 5 个子窗口并发执行")])],
             [makeFieldLabel("状态"), statusLabel],
         ])
         formGrid.translatesAutoresizingMaskIntoConstraints = false
         formGrid.rowSpacing = 14
-        formGrid.columnSpacing = 16
+        formGrid.columnSpacing = 12
         formGrid.column(at: 0).xPlacement = .trailing
         formGrid.column(at: 1).xPlacement = .fill
 
-        let actionStack = NSStackView(views: [parseButton, splitButton])
+        let actionStack = NSStackView(views: [parseButton, stopButton, splitButton])
         actionStack.orientation = .horizontal
         actionStack.spacing = 12
         actionStack.alignment = .centerY
@@ -455,6 +490,38 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         field.widthAnchor.constraint(greaterThanOrEqualToConstant: 240).isActive = true
     }
 
+    private func configurePrefixControls() {
+        prefixDateLabel.font = .systemFont(ofSize: 15, weight: .medium)
+        prefixDateLabel.textColor = .secondaryLabelColor
+        prefixDateLabel.stringValue = currentSystemDateString()
+
+        prefixLensModeStack.orientation = .horizontal
+        prefixLensModeStack.spacing = 8
+        prefixLensModeStack.alignment = .centerY
+
+        prefixFaceModeStack.orientation = .horizontal
+        prefixFaceModeStack.spacing = 8
+        prefixFaceModeStack.alignment = .centerY
+
+        for mode in PrefixLensMode.allCases {
+            let button = NSButton(radioButtonWithTitle: mode.rawValue, target: self, action: #selector(prefixLensModeChanged(_:)))
+            button.font = .systemFont(ofSize: 14, weight: .medium)
+            button.tag = PrefixLensMode.allCases.firstIndex(of: mode) ?? 0
+            button.state = mode == .firstPerson ? .on : .off
+            prefixLensButtons[mode] = button
+            prefixLensModeStack.addArrangedSubview(button)
+        }
+
+        for mode in PrefixFaceMode.allCases {
+            let button = NSButton(radioButtonWithTitle: mode.rawValue, target: self, action: #selector(prefixFaceModeChanged(_:)))
+            button.font = .systemFont(ofSize: 14, weight: .medium)
+            button.tag = PrefixFaceMode.allCases.firstIndex(of: mode) ?? 0
+            button.state = mode == .noFace ? .on : .off
+            prefixFaceButtons[mode] = button
+            prefixFaceModeStack.addArrangedSubview(button)
+        }
+    }
+
     private func configureFadeStrategyControls() {
         fadeStrategyStack.orientation = .vertical
         fadeStrategyStack.spacing = 8
@@ -557,8 +624,8 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
         let columns: [(String, String, CGFloat)] = [
             ("enabled", "启用", 62),
-            ("start", "开始时间", 128),
-            ("end", "结束时间", 128),
+            ("start", "开始时间", 102),
+            ("end", "结束时间", 102),
         ]
 
         for (identifier, title, width) in columns {
@@ -656,7 +723,22 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     private func makeFieldLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(ofSize: 15, weight: .semibold)
+        label.alignment = .right
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(equalToConstant: Self.fieldLabelColumnWidth).isActive = true
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
         return label
+    }
+
+    private func makeFullWidthFieldSection(_ text: String, content: NSView) -> NSView {
+        let label = makeFieldLabel(text)
+        let row = makeHorizontalRow([label, content])
+        row.alignment = .top
+        row.spacing = 12
+        row.translatesAutoresizingMaskIntoConstraints = false
+        content.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        content.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return row
     }
 
     private func makeHintLabel(_ text: String) -> NSTextField {
@@ -675,6 +757,63 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             firstField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         }
         return stack
+    }
+
+    private func buildPrefixEditor() -> NSView {
+        let stack = NSStackView(views: [
+            prefixLensModeStack,
+            makePrefixSeparatorLabel(),
+            prefixFaceModeStack,
+            makePrefixSeparatorLabel(),
+            customPrefixField,
+            makePrefixSeparatorLabel(),
+            makeHorizontalRow([prefixDateLabel, makeHintLabel("末尾自动拼接两位编号")]),
+        ])
+        stack.orientation = .vertical
+        stack.spacing = 6
+        stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }
+
+    private func makePrefixSeparatorLabel() -> NSTextField {
+        let label = NSTextField(labelWithString: "-")
+        label.font = .systemFont(ofSize: 14, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        return label
+    }
+
+    private func currentSystemDateString() -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyyMMdd"
+        return formatter.string(from: Date())
+    }
+
+    private func currentPrefixLensMode() -> PrefixLensMode {
+        for mode in PrefixLensMode.allCases where prefixLensButtons[mode]?.state == .on {
+            return mode
+        }
+        return .firstPerson
+    }
+
+    private func currentPrefixFaceMode() -> PrefixFaceMode {
+        for mode in PrefixFaceMode.allCases where prefixFaceButtons[mode]?.state == .on {
+            return mode
+        }
+        return .noFace
+    }
+
+    private func currentOutputPrefix() -> String {
+        let parts = [
+            currentPrefixLensMode().rawValue,
+            currentPrefixFaceMode().rawValue,
+            customPrefixField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+            prefixDateLabel.stringValue,
+        ]
+        return parts.joined(separator: "-")
     }
 
     private func currentCropParameters() -> CropParameters? {
@@ -772,18 +911,41 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         return nil
     }
 
+    private func persistOutputDirectoryPath(_ path: String?) {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let defaults = UserDefaults.standard
+        if trimmed.isEmpty {
+            defaults.removeObject(forKey: Self.outputDirectoryDefaultsKey)
+        } else {
+            defaults.set(trimmed, forKey: Self.outputDirectoryDefaultsKey)
+        }
+    }
+
+    private func restorePersistedOutputDirectory() {
+        let defaults = UserDefaults.standard
+        guard
+            let path = defaults.string(forKey: Self.outputDirectoryDefaultsKey)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !path.isEmpty
+        else {
+            return
+        }
+
+        outputDirectoryWasChosenManually = true
+        selectedOutputDirectoryURL = URL(fileURLWithPath: path, isDirectory: true)
+        isProgrammaticallyUpdatingOutputDirectoryField = true
+        outputDirectoryField.stringValue = path
+        isProgrammaticallyUpdatingOutputDirectoryField = false
+    }
+
     private func applyVideoURL(_ url: URL) {
         selectedVideoURL = url
         isProgrammaticallyUpdatingVideoField = true
         videoPathField.stringValue = url.path
         isProgrammaticallyUpdatingVideoField = false
 
-        if !outputDirectoryWasChosenManually || selectedOutputDirectoryURL == nil {
+        if !outputDirectoryWasChosenManually, selectedOutputDirectoryURL != nil {
             applyOutputDirectoryURL(url.deletingLastPathComponent(), manual: false)
-        }
-
-        if prefixField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            prefixField.stringValue = url.deletingPathExtension().lastPathComponent
         }
 
         clearDetectionResults()
@@ -797,6 +959,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         isProgrammaticallyUpdatingOutputDirectoryField = true
         outputDirectoryField.stringValue = url.path
         isProgrammaticallyUpdatingOutputDirectoryField = false
+        persistOutputDirectoryPath(url.path)
         updateNamingPreview()
         if detectorPayload != nil {
             refreshGeneratedJobs()
@@ -839,8 +1002,9 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             segments: editableSegments,
             videoURL: selectedVideoURL,
             outputDirectoryURL: outputDirectoryURL,
-            prefix: prefixField.stringValue,
-            crop: currentCropParameters()
+            prefix: currentOutputPrefix(),
+            crop: currentCropParameters(),
+            videoDuration: effectiveVideoDuration()
         )
 
         if let detectorPayload {
@@ -857,25 +1021,47 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     }
 
     private func updateSplitButtonState() {
-        splitButton.isEnabled = splitCoordinator == nil && !generatedJobs.isEmpty
+        splitButton.isEnabled = splitCoordinator == nil && !editableSegments.isEmpty
         validateTransitionsButton.isEnabled = splitCoordinator == nil && !(detectorPayload?.events.isEmpty ?? true)
         addSegmentButton.isEnabled = splitCoordinator == nil
+        stopButton.isEnabled = true
     }
 
     private func updateNamingPreview() {
         let extensionName = selectedVideoURL?.pathExtension ?? "mp4"
         let fallbackPrefix = selectedVideoURL?.deletingPathExtension().lastPathComponent ?? "clip"
-        let safePrefix = sanitizePrefix(prefixField.stringValue, fallback: fallbackPrefix)
-        let sampleName = makeOutputFileName(prefix: safePrefix, index: 1, pathExtension: extensionName)
+        prefixDateLabel.stringValue = currentSystemDateString()
+        let safePrefix = sanitizePrefix(currentOutputPrefix(), fallback: fallbackPrefix)
+        let sampleName = makeOutputFileName(
+            prefix: safePrefix,
+            index: 1,
+            totalCount: max(1, generatedJobs.count),
+            pathExtension: extensionName
+        )
         if let outputDirectoryURL = resolvedOutputDirectoryURL() {
             namingPreviewLabel.stringValue = outputDirectoryURL.appendingPathComponent(sampleName).path
         } else {
             namingPreviewLabel.stringValue = sampleName
         }
+        namingPreviewLabel.toolTip = namingPreviewLabel.stringValue
+    }
+
+    private func effectiveVideoDuration() -> Double? {
+        detectorPayload?.duration ?? probedVideoDuration
+    }
+
+    private func ensureVideoDurationAvailable(runtime: RuntimeConfiguration, videoURL: URL) throws -> Double? {
+        if let duration = effectiveVideoDuration() {
+            return duration
+        }
+        let duration = try MediaProbeService(runtime: runtime).resolveDuration(videoURL: videoURL)
+        probedVideoDuration = duration
+        return duration
     }
 
     private func clearDetectionResults() {
         detectorPayload = nil
+        probedVideoDuration = nil
         editableSegments = []
         generatedJobs = []
         hoveredManualSegmentRow = nil
@@ -886,8 +1072,20 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         updateSplitButtonState()
     }
 
-    private func rebuildJobsFromEditableSegments() {
+    private func rebuildJobsFromEditableSegments(autoDisableInvalidSegments: Bool = false) {
+        if autoDisableInvalidSegments {
+            normalizeSegmentEnabledStates()
+        }
         refreshGeneratedJobs()
+    }
+
+    private func normalizeSegmentEnabledStates() {
+        let videoDuration = effectiveVideoDuration()
+        for index in editableSegments.indices {
+            if !editableSegments[index].shouldDefaultEnable(videoDuration: videoDuration) {
+                editableSegments[index].isEnabled = false
+            }
+        }
     }
 
     private func updateSegmentMasterCheckboxState() {
@@ -932,15 +1130,16 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     @objc private func addSegmentRow(_ sender: Any?) {
         let nextIndex = (editableSegments.map(\.index).max() ?? -1) + 1
-        let maxDuration = detectorPayload?.duration
-        let start = min(maxDuration ?? .greatestFiniteMagnitude, max(0.0, editableSegments.last?.end ?? 0.0))
+        let maxDuration = effectiveVideoDuration()
+        let lastEnd = editableSegments.last?.resolvedEnd(videoDuration: maxDuration) ?? 0.0
+        let start = min(maxDuration ?? .greatestFiniteMagnitude, max(0.0, lastEnd))
         let rawEnd = min(maxDuration ?? .greatestFiniteMagnitude, start + 1.0)
         let end = rawEnd > start ? rawEnd : start + 0.001
 
         editableSegments.append(
             EditableSegment(
                 index: nextIndex,
-                isEnabled: true,
+                isEnabled: end > start,
                 start: start,
                 end: end,
                 isManual: true
@@ -971,34 +1170,45 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             return
         }
 
-        guard let parsed = parseHMS(sender.stringValue) else {
-            sender.stringValue = formatHMS(sender.kind == .start ? editableSegments[row].start : editableSegments[row].end)
+        let videoDuration = detectorPayload?.duration
+        let fallbackDuration = effectiveVideoDuration()
+        let trimmed = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if sender.kind == .end, trimmed.isEmpty {
+            editableSegments[row].end = nil
+            rebuildJobsFromEditableSegments(autoDisableInvalidSegments: true)
+            segmentTableView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 2))
+            return
+        }
+
+        guard let parsed = parseHMS(trimmed) else {
+            sender.stringValue = sender.kind == .start
+                ? formatSegmentStartHMS(editableSegments[row].start)
+                : formatOptionalSegmentEndHMS(editableSegments[row].end)
             showError("时间格式应为 时:分:秒.毫秒，例如 00:01:23.456。")
             return
         }
 
         switch sender.kind {
         case .start:
-            guard parsed < editableSegments[row].end else {
-                sender.stringValue = formatHMS(editableSegments[row].start)
-                showError("开始时间必须小于结束时间。")
-                return
-            }
             editableSegments[row].start = parsed
+            if let currentEnd = editableSegments[row].resolvedEnd(videoDuration: videoDuration ?? fallbackDuration), parsed >= currentEnd {
+                editableSegments[row].end = parsed + 60.0
+            }
         case .end:
             guard parsed > editableSegments[row].start else {
-                sender.stringValue = formatHMS(editableSegments[row].end)
+                sender.stringValue = formatOptionalSegmentEndHMS(editableSegments[row].end)
                 showError("结束时间必须大于开始时间。")
                 return
             }
             editableSegments[row].end = parsed
         }
 
-        rebuildJobsFromEditableSegments()
+        rebuildJobsFromEditableSegments(autoDisableInvalidSegments: true)
     }
 
     private func currentConcurrency() -> Int {
-        let parsed = Int(concurrencyField.stringValue) ?? 3
+        let parsed = Int(concurrencyField.stringValue) ?? Self.defaultConcurrency
         let clamped = min(12, max(1, parsed))
         concurrencyField.stringValue = "\(clamped)"
         concurrencyStepper.integerValue = clamped
@@ -1043,7 +1253,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
             if exists && !isDirectory.boolValue {
                 selectedVideoURL = url
-                if !outputDirectoryWasChosenManually || selectedOutputDirectoryURL == nil {
+                if !outputDirectoryWasChosenManually, selectedOutputDirectoryURL != nil {
                     applyOutputDirectoryURL(url.deletingLastPathComponent(), manual: false)
                 }
                 if detectorPayload != nil {
@@ -1060,7 +1270,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             return
         }
 
-        if field == prefixField {
+        if field == customPrefixField {
             updateNamingPreview()
             if detectorPayload != nil {
                 refreshGeneratedJobs()
@@ -1089,7 +1299,16 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             if isProgrammaticallyUpdatingOutputDirectoryField {
                 return
             }
-            outputDirectoryWasChosenManually = true
+            let typed = outputDirectoryField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if typed.isEmpty {
+                outputDirectoryWasChosenManually = false
+                selectedOutputDirectoryURL = nil
+                persistOutputDirectoryPath(nil)
+            } else {
+                outputDirectoryWasChosenManually = true
+                selectedOutputDirectoryURL = URL(fileURLWithPath: typed, isDirectory: true)
+                persistOutputDirectoryPath(typed)
+            }
             updateNamingPreview()
             if detectorPayload != nil {
                 refreshGeneratedJobs()
@@ -1114,6 +1333,36 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     @objc private func concurrencyStepperChanged(_ sender: NSStepper) {
         concurrencyField.stringValue = "\(sender.integerValue)"
+    }
+
+    @objc private func prefixLensModeChanged(_ sender: NSButton) {
+        let selectedIndex = sender.tag
+        guard selectedIndex >= 0, selectedIndex < PrefixLensMode.allCases.count else {
+            return
+        }
+        let selectedMode = PrefixLensMode.allCases[selectedIndex]
+        for mode in PrefixLensMode.allCases {
+            prefixLensButtons[mode]?.state = mode == selectedMode ? .on : .off
+        }
+        updateNamingPreview()
+        if detectorPayload != nil {
+            refreshGeneratedJobs()
+        }
+    }
+
+    @objc private func prefixFaceModeChanged(_ sender: NSButton) {
+        let selectedIndex = sender.tag
+        guard selectedIndex >= 0, selectedIndex < PrefixFaceMode.allCases.count else {
+            return
+        }
+        let selectedMode = PrefixFaceMode.allCases[selectedIndex]
+        for mode in PrefixFaceMode.allCases {
+            prefixFaceButtons[mode]?.state = mode == selectedMode ? .on : .off
+        }
+        updateNamingPreview()
+        if detectorPayload != nil {
+            refreshGeneratedJobs()
+        }
     }
 
     @objc private func fadeStrategyRadioChanged(_ sender: NSButton) {
@@ -1184,12 +1433,21 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             applyOutputDirectoryURL(videoURL.deletingLastPathComponent(), manual: false)
         } else {
             selectedOutputDirectoryURL = nil
+            isProgrammaticallyUpdatingOutputDirectoryField = true
             outputDirectoryField.stringValue = ""
+            isProgrammaticallyUpdatingOutputDirectoryField = false
+            persistOutputDirectoryPath(nil)
             updateNamingPreview()
+            if detectorPayload != nil {
+                refreshGeneratedJobs()
+            }
         }
     }
 
     @objc private func parseVideo(_ sender: Any?) {
+        guard detectorCancellation == nil else {
+            return
+        }
         guard let videoURL = selectedVideoURL else {
             showError("请先选择视频文件，或直接拖入视频。")
             return
@@ -1208,14 +1466,15 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             return
         }
 
-        guard let outputDirectoryURL = resolvedOutputDirectoryURL() else {
+        guard resolvedOutputDirectoryURL() != nil else {
             showError("无法确定输出目录。")
             return
         }
 
-        outputDirectoryField.stringValue = outputDirectoryURL.path
         parseButton.isEnabled = false
         splitButton.isEnabled = false
+        validateTransitionsButton.isEnabled = false
+        stopButton.isEnabled = true
         statusLabel.stringValue = "解析中，请稍候..."
 
         do {
@@ -1223,7 +1482,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             let detector = DetectorService(runtime: runtime)
             let strategy = currentFadeRemovalStrategy()
             let padding = currentFadePaddingSettings(for: strategy)
-            detector.detect(
+            detectorCancellation = detector.detect(
                 videoURL: videoURL,
                 skipStartSeconds: currentSkipStartSeconds(),
                 fadeRemovalStrategy: strategy,
@@ -1236,14 +1495,21 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                 }
             ) { result in
                 DispatchQueue.main.async {
+                    self.detectorCancellation = nil
                     self.parseButton.isEnabled = true
+                    self.updateSplitButtonState()
                     switch result {
                     case .success(let payload):
                         self.detectorPayload = payload
+                        self.probedVideoDuration = payload.duration
                         self.editableSegments = buildEditableSegments(payload: payload)
                         self.refreshGeneratedJobs()
                         self.statusLabel.stringValue = "解析完成：\(payload.events.count) 个换场，\(payload.keepSegments.count) 个保留片段，Fade=\(strategy.displayName) L=\(String(format: "%.2f", padding.leftSeconds))s R=\(String(format: "%.2f", padding.rightSeconds))s。"
                     case .failure(let error):
+                        if case AppRuntimeError.operationCancelled = error {
+                            self.statusLabel.stringValue = "解析已停止。"
+                            return
+                        }
                         self.clearDetectionResults()
                         self.statusLabel.stringValue = "解析失败。"
                         self.showError(error.localizedDescription)
@@ -1251,24 +1517,46 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                 }
             }
         } catch {
+            detectorCancellation = nil
             parseButton.isEnabled = true
+            updateSplitButtonState()
             statusLabel.stringValue = "解析失败。"
             showError(error.localizedDescription)
         }
     }
 
+    @objc private func stopAllProcessing(_ sender: Any?) {
+        guard splitCoordinator != nil || detectorCancellation != nil else {
+            closeAllWorkerWindows()
+            statusLabel.stringValue = "已关闭所有任务窗口。"
+            updateSplitButtonState()
+            return
+        }
+        detectorCancellation?.cancel()
+        detectorCancellation = nil
+        splitCoordinator?.cancelAll()
+        parseButton.isEnabled = true
+        statusLabel.stringValue = "正在停止..."
+        updateSplitButtonState()
+    }
+
     @objc private func splitVideo(_ sender: Any?) {
-        startExport(operation: .split) { [weak self] in
+        startExport(operation: .split) { [weak self] runtime in
             guard let self else {
                 return []
             }
-            self.refreshGeneratedJobs()
+            if
+                let videoURL = self.selectedVideoURL,
+                (try? self.ensureVideoDurationAvailable(runtime: runtime, videoURL: videoURL)) != nil
+            {
+                self.rebuildJobsFromEditableSegments(autoDisableInvalidSegments: true)
+            }
             return self.generatedJobs
         }
     }
 
     @objc private func exportValidationTransitions(_ sender: Any?) {
-        startExport(operation: .validateTransitions) { [weak self] in
+        startExport(operation: .validateTransitions) { [weak self] _ in
             guard
                 let self,
                 let payload = self.detectorPayload,
@@ -1282,13 +1570,13 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                 payload: payload,
                 videoURL: videoURL,
                 outputDirectoryURL: outputDirectoryURL,
-                prefix: self.prefixField.stringValue,
+                prefix: self.currentOutputPrefix(),
                 crop: self.currentCropParameters()
             )
         }
     }
 
-    private func startExport(operation: ExportOperationKind, jobsBuilder: () -> [FFmpegJob]) {
+    private func startExport(operation: ExportOperationKind, jobsBuilder: (RuntimeConfiguration) throws -> [FFmpegJob]) {
         guard splitCoordinator == nil else {
             return
         }
@@ -1313,7 +1601,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             }
 
             try FileManager.default.createDirectory(at: outputDirectoryURL, withIntermediateDirectories: true)
-            let jobs = jobsBuilder()
+            let jobs = try jobsBuilder(runtime)
             guard !jobs.isEmpty else {
                 showError(operation.emptyJobsErrorMessage)
                 return
@@ -1326,17 +1614,21 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                 workerWindowTitlePrefix: operation.workerWindowTitlePrefix
             )
             coordinator.delegate = self
+            workerWindowControllers = coordinator.workerWindowControllers
             splitCoordinator = coordinator
             activeExportOperation = operation
 
             parseButton.isEnabled = false
             splitButton.isEnabled = false
             validateTransitionsButton.isEnabled = false
+            stopButton.isEnabled = true
             statusLabel.stringValue = operation.initialStatusText
             coordinator.start()
         } catch {
             activeExportOperation = nil
+            workerWindowControllers = []
             statusLabel.stringValue = operation.launchFailureStatusText
+            updateSplitButtonState()
             showError(error.localizedDescription)
         }
     }
@@ -1351,12 +1643,16 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         statusLabel.stringValue = operation.updateStatusText(completed: completed, failed: failed, total: total)
     }
 
-    func splitCoordinatorDidFinish(completed: Int, failed: Int, total: Int) {
+    func splitCoordinatorDidFinish(completed: Int, failed: Int, total: Int, wasCancelled: Bool) {
         let operation = activeExportOperation ?? .split
         splitCoordinator = nil
         activeExportOperation = nil
         parseButton.isEnabled = true
         updateSplitButtonState()
+        if wasCancelled {
+            statusLabel.stringValue = "已停止：成功 \(completed) / \(total)，失败 \(failed)。"
+            return
+        }
         statusLabel.stringValue = operation.finishStatusText(completed: completed, failed: failed, total: total)
         if failed > 0 {
             showError(operation.failureAlertMessage(failed: failed))
@@ -1487,12 +1783,14 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                     field = SegmentTimeField(frame: .zero)
                     field.identifier = fieldIdentifier
                     field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-                    field.alignment = .center
+                    field.alignment = identifier.rawValue == "start" ? .right : .left
                     field.controlSize = .large
+                    field.placeholderString = isEndColumn ? "留空到结尾" : nil
                     field.delegate = self
                     field.target = self
                     field.action = #selector(segmentTimeFieldChanged(_:))
                     field.translatesAutoresizingMaskIntoConstraints = false
+                    field.widthAnchor.constraint(equalToConstant: 84).isActive = true
                     container.addSubview(field)
 
                     if isEndColumn {
@@ -1526,7 +1824,11 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                 }
                 field.segmentRow = row
                 field.kind = identifier.rawValue == "start" ? .start : .end
-                field.stringValue = formatHMS(identifier.rawValue == "start" ? segment.start : segment.end)
+                field.alignment = identifier.rawValue == "start" ? .right : .left
+                field.placeholderString = identifier.rawValue == "end" ? "留空到结尾" : nil
+                field.stringValue = identifier.rawValue == "start"
+                    ? formatSegmentStartHMS(segment.start)
+                    : formatOptionalSegmentEndHMS(segment.end)
                 field.textColor = .labelColor
                 field.drawsBackground = true
                 field.backgroundColor = segment.isManual ? manualBackgroundColor : .textBackgroundColor
@@ -1541,5 +1843,12 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         }
 
         return nil
+    }
+
+    private func closeAllWorkerWindows() {
+        for controller in workerWindowControllers {
+            controller.close()
+        }
+        workerWindowControllers.removeAll()
     }
 }

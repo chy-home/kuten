@@ -4,6 +4,8 @@ enum AppRuntimeError: LocalizedError {
     case missingDependency(String)
     case detectorFailed(String)
     case invalidDetectorOutput(String)
+    case operationCancelled(String)
+    case mediaProbeFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +15,10 @@ enum AppRuntimeError: LocalizedError {
             return message
         case .invalidDetectorOutput(let message):
             return message
+        case .operationCancelled(let message):
+            return message
+        case .mediaProbeFailed(let message):
+            return message
         }
     }
 }
@@ -21,6 +27,7 @@ struct RuntimeConfiguration {
     let pythonURL: URL
     let detectorScriptURL: URL
     let ffmpegURL: URL
+    let ffprobeURL: URL?
 
     var subprocessEnvironment: [String: String] {
         var environment = ProcessInfo.processInfo.environment
@@ -92,10 +99,19 @@ enum RuntimeResolver {
             throw AppRuntimeError.missingDependency("未找到 ffmpeg。请确认 ffmpeg 已安装在 /opt/homebrew/bin 或 /usr/local/bin。")
         }
 
+        let ffprobeCandidates: [URL?] = [
+            ffmpegURL.deletingLastPathComponent().appendingPathComponent("ffprobe"),
+            URL(fileURLWithPath: "/opt/homebrew/bin/ffprobe"),
+            URL(fileURLWithPath: "/usr/local/bin/ffprobe"),
+            URL(fileURLWithPath: "/usr/bin/ffprobe"),
+        ]
+        let ffprobeURL = firstExecutable(in: ffprobeCandidates)
+
         return RuntimeConfiguration(
             pythonURL: pythonURL,
             detectorScriptURL: detectorScriptURL,
-            ffmpegURL: ffmpegURL
+            ffmpegURL: ffmpegURL,
+            ffprobeURL: ffprobeURL
         )
     }
 
@@ -127,6 +143,7 @@ final class DetectorService {
         self.runtime = runtime
     }
 
+    @discardableResult
     func detect(
         videoURL: URL,
         skipStartSeconds: Double,
@@ -135,7 +152,8 @@ final class DetectorService {
         fadeRightPaddingSeconds: Double,
         progress: @escaping (String) -> Void,
         completion: @escaping (Result<DetectorPayload, Error>) -> Void
-    ) {
+    ) -> DetectorCancellation {
+        let cancellation = DetectorCancellation()
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let payload = try self.detectSync(
@@ -144,13 +162,19 @@ final class DetectorService {
                     fadeRemovalStrategy: fadeRemovalStrategy,
                     fadeLeftPaddingSeconds: fadeLeftPaddingSeconds,
                     fadeRightPaddingSeconds: fadeRightPaddingSeconds,
-                    progress: progress
+                    progress: progress,
+                    cancellation: cancellation
                 )
+                if cancellation.isCancelled {
+                    completion(.failure(AppRuntimeError.operationCancelled("解析已停止。")))
+                    return
+                }
                 completion(.success(payload))
             } catch {
                 completion(.failure(error))
             }
         }
+        return cancellation
     }
 
     func detectSync(
@@ -159,7 +183,8 @@ final class DetectorService {
         fadeRemovalStrategy: FadeRemovalStrategy = .defaultValue,
         fadeLeftPaddingSeconds: Double,
         fadeRightPaddingSeconds: Double,
-        progress: ((String) -> Void)? = nil
+        progress: ((String) -> Void)? = nil,
+        cancellation: DetectorCancellation? = nil
     ) throws -> DetectorPayload {
         let process = Process()
         process.executableURL = runtime.pythonURL
@@ -188,6 +213,11 @@ final class DetectorService {
         var stdoutBuffer = Data()
         var stderrBuffer = Data()
         var stderrProgressBuffer = Data()
+
+        if cancellation?.isCancelled == true {
+            throw AppRuntimeError.operationCancelled("解析已停止。")
+        }
+        cancellation?.attach(process: process)
 
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
@@ -225,10 +255,14 @@ final class DetectorService {
             }
         }
 
+        defer {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            cancellation?.detachProcess()
+        }
+
         try process.run()
         process.waitUntilExit()
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-        stderrPipe.fileHandleForReading.readabilityHandler = nil
 
         let remainingStdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
         let remainingStderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
@@ -262,6 +296,9 @@ final class DetectorService {
         let stdoutText = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
 
+        if cancellation?.isCancelled == true {
+            throw AppRuntimeError.operationCancelled("解析已停止。")
+        }
         if process.terminationStatus != 0 {
             let message = stderrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -281,5 +318,155 @@ final class DetectorService {
         } catch {
             throw AppRuntimeError.invalidDetectorOutput("无法解析检测脚本输出：\(error.localizedDescription)")
         }
+    }
+}
+
+final class DetectorCancellation {
+    private let stateQueue = DispatchQueue(label: "DetectorService.cancellation-state")
+    private var process: Process?
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        stateQueue.sync { cancelled }
+    }
+
+    func attach(process: Process) {
+        let shouldCancel = stateQueue.sync { () -> Bool in
+            self.process = process
+            return cancelled
+        }
+        if shouldCancel {
+            terminate(process)
+        }
+    }
+
+    func detachProcess() {
+        stateQueue.sync {
+            process = nil
+        }
+    }
+
+    func cancel() {
+        let processToCancel = stateQueue.sync { () -> Process? in
+            cancelled = true
+            return process
+        }
+        guard let processToCancel else {
+            return
+        }
+        terminate(processToCancel)
+    }
+
+    private func terminate(_ process: Process) {
+        guard process.isRunning else {
+            return
+        }
+        process.terminate()
+    }
+}
+
+final class MediaProbeService {
+    private let runtime: RuntimeConfiguration
+
+    init(runtime: RuntimeConfiguration) {
+        self.runtime = runtime
+    }
+
+    func resolveDuration(videoURL: URL) throws -> Double {
+        if let ffprobeURL = runtime.ffprobeURL, let duration = try probeDurationWithFFprobe(videoURL: videoURL, ffprobeURL: ffprobeURL) {
+            return duration
+        }
+        if let duration = try probeDurationWithFFmpeg(videoURL: videoURL) {
+            return duration
+        }
+        throw AppRuntimeError.mediaProbeFailed("无法获取视频时长。")
+    }
+
+    private func probeDurationWithFFprobe(videoURL: URL, ffprobeURL: URL) throws -> Double? {
+        let result = try runProcess(
+            executableURL: ffprobeURL,
+            arguments: [
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                videoURL.path,
+            ]
+        )
+
+        guard result.terminationStatus == 0 else {
+            return nil
+        }
+
+        let trimmed = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let duration = Double(trimmed), duration.isFinite, duration > 0 else {
+            return nil
+        }
+        return duration
+    }
+
+    private func probeDurationWithFFmpeg(videoURL: URL) throws -> Double? {
+        let result = try runProcess(
+            executableURL: runtime.ffmpegURL,
+            arguments: [
+                "-hide_banner",
+                "-i",
+                videoURL.path,
+            ]
+        )
+
+        let combinedOutput = [result.stdout, result.stderr]
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !combinedOutput.isEmpty else {
+            return nil
+        }
+        return parseDurationFromFFmpegOutput(combinedOutput)
+    }
+
+    private func runProcess(executableURL: URL, arguments: [String]) throws -> (terminationStatus: Int32, stdout: String, stderr: String) {
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+        process.environment = runtime.subprocessEnvironment
+        process.standardInput = FileHandle.nullDevice
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return (process.terminationStatus, stdout, stderr)
+    }
+
+    private func parseDurationFromFFmpegOutput(_ output: String) -> Double? {
+        let pattern = #"Duration:\s*(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+
+        let nsRange = NSRange(output.startIndex..<output.endIndex, in: output)
+        guard
+            let match = regex.firstMatch(in: output, options: [], range: nsRange),
+            match.numberOfRanges == 4,
+            let hoursRange = Range(match.range(at: 1), in: output),
+            let minutesRange = Range(match.range(at: 2), in: output),
+            let secondsRange = Range(match.range(at: 3), in: output),
+            let hours = Double(output[hoursRange]),
+            let minutes = Double(output[minutesRange]),
+            let seconds = Double(output[secondsRange])
+        else {
+            return nil
+        }
+
+        let duration = hours * 3600.0 + minutes * 60.0 + seconds
+        return duration > 0 ? duration : nil
     }
 }

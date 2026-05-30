@@ -4,7 +4,7 @@ import Foundation
 protocol SplitCoordinatorDelegate: AnyObject {
     func splitCoordinatorDidStart(totalJobs: Int, workerCount: Int)
     func splitCoordinatorDidUpdate(completed: Int, failed: Int, total: Int)
-    func splitCoordinatorDidFinish(completed: Int, failed: Int, total: Int)
+    func splitCoordinatorDidFinish(completed: Int, failed: Int, total: Int, wasCancelled: Bool)
 }
 
 final class SplitCoordinator {
@@ -16,8 +16,12 @@ final class SplitCoordinator {
     private var completedJobs = 0
     private var failedJobs = 0
     private var finished = false
+    private var cancelled = false
 
     weak var delegate: SplitCoordinatorDelegate?
+    var workerWindowControllers: [WorkerWindowController] {
+        workers.map(\.windowController)
+    }
 
     init(jobs: [FFmpegJob], concurrency: Int, runtime: RuntimeConfiguration, workerWindowTitlePrefix: String = "分解任务") {
         self.jobs = jobs
@@ -44,7 +48,7 @@ final class SplitCoordinator {
 
     func start() {
         guard !jobs.isEmpty else {
-            delegate?.splitCoordinatorDidFinish(completed: 0, failed: 0, total: 0)
+            delegate?.splitCoordinatorDidFinish(completed: 0, failed: 0, total: 0, wasCancelled: false)
             return
         }
 
@@ -59,7 +63,26 @@ final class SplitCoordinator {
         }
     }
 
+    func cancelAll() {
+        guard !finished, !cancelled else {
+            return
+        }
+        cancelled = true
+        for worker in workers {
+            worker.cancel()
+            worker.windowController.setIdle(detail: "已停止")
+        }
+        if runningJobs == 0 {
+            finishIfNeeded()
+        }
+    }
+
     private func scheduleNext(for worker: WorkerRunner) {
+        guard !cancelled else {
+            worker.windowController.setIdle(detail: "已停止")
+            finishIfNeeded()
+            return
+        }
         if nextJobOffset >= jobs.count {
             worker.windowController.setIdle(detail: "当前没有待处理任务")
             finishIfNeeded()
@@ -99,10 +122,16 @@ final class SplitCoordinator {
             return
         }
 
+        if cancelled && runningJobs == 0 {
+            finished = true
+            delegate?.splitCoordinatorDidFinish(completed: completedJobs, failed: failedJobs, total: jobs.count, wasCancelled: true)
+            return
+        }
+
         let processedJobs = completedJobs + failedJobs
         if processedJobs == jobs.count && runningJobs == 0 {
             finished = true
-            delegate?.splitCoordinatorDidFinish(completed: completedJobs, failed: failedJobs, total: jobs.count)
+            delegate?.splitCoordinatorDidFinish(completed: completedJobs, failed: failedJobs, total: jobs.count, wasCancelled: false)
         }
     }
 }
@@ -121,6 +150,13 @@ final class WorkerRunner: NSObject {
             windowTitlePrefix: windowTitlePrefix
         )
         self.runtime = runtime
+    }
+
+    func cancel() {
+        logPipe?.fileHandleForReading.readabilityHandler = nil
+        if let process, process.isRunning {
+            process.terminate()
+        }
     }
 
     func run(job: FFmpegJob, position: Int, total: Int) throws {

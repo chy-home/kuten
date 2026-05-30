@@ -19,7 +19,6 @@ enum FadeRemovalStrategy: String, CaseIterable {
     case conservative
     case standard
     case aggressive
-    case extreme
 
     var displayName: String {
         switch self {
@@ -29,8 +28,6 @@ enum FadeRemovalStrategy: String, CaseIterable {
             return "标准"
         case .aggressive:
             return "激进"
-        case .extreme:
-            return "极激进"
         }
     }
 
@@ -41,17 +38,15 @@ enum FadeRemovalStrategy: String, CaseIterable {
     var defaultPaddingSettings: FadePaddingSettings {
         switch self {
         case .conservative:
-            return FadePaddingSettings(leftSeconds: 0.04, rightSeconds: 0.12)
+            return FadePaddingSettings(leftSeconds: 0.30, rightSeconds: 0.30)
         case .standard:
-            return FadePaddingSettings(leftSeconds: 0.08, rightSeconds: 0.18)
+            return FadePaddingSettings(leftSeconds: 0.50, rightSeconds: 0.50)
         case .aggressive:
-            return FadePaddingSettings(leftSeconds: 0.12, rightSeconds: 0.24)
-        case .extreme:
-            return FadePaddingSettings(leftSeconds: 0.16, rightSeconds: 0.32)
+            return FadePaddingSettings(leftSeconds: 1.00, rightSeconds: 1.00)
         }
     }
 
-    static let defaultValue: FadeRemovalStrategy = .aggressive
+    static let defaultValue: FadeRemovalStrategy = .standard
 
     init(pythonArgument: String?) {
         guard let pythonArgument, let value = FadeRemovalStrategy(rawValue: pythonArgument) else {
@@ -83,11 +78,43 @@ struct EditableSegment {
     let index: Int
     var isEnabled: Bool
     var start: Double
-    var end: Double
+    var end: Double?
     var isManual: Bool
 
-    var duration: Double {
-        max(0.0, end - start)
+    func resolvedEnd(videoDuration: Double?) -> Double? {
+        end ?? videoDuration
+    }
+
+    func duration(videoDuration: Double?) -> Double? {
+        guard let resolvedEnd = resolvedEnd(videoDuration: videoDuration) else {
+            return nil
+        }
+        return max(0.0, resolvedEnd - start)
+    }
+
+    func exportStartSeconds() -> Double {
+        normalizeSegmentStartSeconds(start)
+    }
+
+    func exportResolvedEndSeconds(videoDuration: Double?) -> Double? {
+        guard let resolvedEnd = resolvedEnd(videoDuration: videoDuration) else {
+            return nil
+        }
+        return normalizeSegmentEndSeconds(resolvedEnd)
+    }
+
+    func exportDurationSeconds(videoDuration: Double?) -> Double? {
+        guard let exportEnd = exportResolvedEndSeconds(videoDuration: videoDuration) else {
+            return nil
+        }
+        return max(0.0, exportEnd - exportStartSeconds())
+    }
+
+    func shouldDefaultEnable(videoDuration: Double?) -> Bool {
+        guard let duration = exportDurationSeconds(videoDuration: videoDuration) else {
+            return true
+        }
+        return duration > 0
     }
 }
 
@@ -185,6 +212,48 @@ func formatHMS(_ seconds: Double) -> String {
     return String(format: "%02d:%02d:%02d.%03d", hours, minutes, secs, millis)
 }
 
+func formatOptionalHMS(_ seconds: Double?) -> String {
+    guard let seconds else {
+        return ""
+    }
+    return formatHMS(seconds)
+}
+
+func formatHMSWithoutMilliseconds(_ seconds: Double) -> String {
+    let bounded = max(0.0, seconds)
+    let roundedSeconds = Int(bounded.rounded())
+    let hours = roundedSeconds / 3600
+    let minutes = (roundedSeconds % 3600) / 60
+    let secs = roundedSeconds % 60
+    return String(format: "%02d:%02d:%02d", hours, minutes, secs)
+}
+
+func formatOptionalHMSWithoutMilliseconds(_ seconds: Double?) -> String {
+    guard let seconds else {
+        return ""
+    }
+    return formatHMSWithoutMilliseconds(seconds)
+}
+
+func normalizeSegmentStartSeconds(_ seconds: Double) -> Double {
+    max(0.0, ceil(max(0.0, seconds) - 0.000_000_001))
+}
+
+func normalizeSegmentEndSeconds(_ seconds: Double) -> Double {
+    max(0.0, floor(max(0.0, seconds) + 0.000_000_001))
+}
+
+func formatSegmentStartHMS(_ seconds: Double) -> String {
+    formatHMSWithoutMilliseconds(normalizeSegmentStartSeconds(seconds))
+}
+
+func formatOptionalSegmentEndHMS(_ seconds: Double?) -> String {
+    guard let seconds else {
+        return ""
+    }
+    return formatHMSWithoutMilliseconds(normalizeSegmentEndSeconds(seconds))
+}
+
 func formatSecondsArgument(_ seconds: Double) -> String {
     let bounded = max(0.0, seconds)
     let formatted = String(format: "%.3f", bounded)
@@ -251,9 +320,14 @@ func sanitizePrefix(_ value: String, fallback: String) -> String {
     return "clip"
 }
 
-func makeOutputFileName(prefix: String, index: Int, pathExtension: String) -> String {
-    let number = String(format: "%02d", index)
-    let baseName = prefix.isEmpty ? number : "\(prefix)-\(number)"
+func makeOutputFileName(prefix: String, index: Int, totalCount: Int, pathExtension: String) -> String {
+    let baseName: String
+    if totalCount <= 1 {
+        baseName = prefix.isEmpty ? "clip" : prefix
+    } else {
+        let number = String(format: "%02d", index)
+        baseName = prefix.isEmpty ? number : "\(prefix)-\(number)"
+    }
     if pathExtension.isEmpty {
         return baseName
     }
@@ -262,32 +336,52 @@ func makeOutputFileName(prefix: String, index: Int, pathExtension: String) -> St
 
 func buildEditableSegments(payload: DetectorPayload) -> [EditableSegment] {
     payload.keepSegments.map { segment in
-        EditableSegment(
+        let editable = EditableSegment(
             index: segment.index,
             isEnabled: true,
             start: segment.start,
             end: segment.end,
             isManual: false
         )
+        return EditableSegment(
+            index: editable.index,
+            isEnabled: editable.shouldDefaultEnable(videoDuration: payload.duration),
+            start: editable.start,
+            end: editable.end,
+            isManual: editable.isManual
+        )
     }
 }
 
-func buildJobs(segments: [EditableSegment], videoURL: URL, outputDirectoryURL: URL, prefix: String, crop: CropParameters?) -> [FFmpegJob] {
+func buildJobs(segments: [EditableSegment], videoURL: URL, outputDirectoryURL: URL, prefix: String, crop: CropParameters?, videoDuration: Double?) -> [FFmpegJob] {
     let inputExtension = videoURL.pathExtension
     let fallbackPrefix = videoURL.deletingPathExtension().lastPathComponent
     let safePrefix = sanitizePrefix(prefix, fallback: fallbackPrefix)
 
-    let enabledSegments = segments.filter { $0.isEnabled && $0.duration > 0 }
+    let enabledSegments = segments.compactMap { segment -> (EditableSegment, Double)? in
+        guard
+            segment.isEnabled,
+            let duration = segment.exportDurationSeconds(videoDuration: videoDuration),
+            duration > 0
+        else {
+            return nil
+        }
+        return (segment, duration)
+    }
 
-    return enabledSegments.enumerated().map { offset, segment in
+    let totalCount = enabledSegments.count
+
+    return enabledSegments.enumerated().map { offset, element in
+        let segment = element.0
+        let duration = element.1
         let outputIndex = offset + 1
-        let fileName = makeOutputFileName(prefix: safePrefix, index: outputIndex, pathExtension: inputExtension)
+        let fileName = makeOutputFileName(prefix: safePrefix, index: outputIndex, totalCount: totalCount, pathExtension: inputExtension)
         return FFmpegJob(
             index: outputIndex,
             inputURL: videoURL,
             outputURL: outputDirectoryURL.appendingPathComponent(fileName),
-            start: segment.start,
-            duration: segment.duration,
+            start: segment.exportStartSeconds(),
+            duration: duration,
             crop: crop
         )
     }
@@ -299,22 +393,27 @@ func buildTransitionValidationJobs(payload: DetectorPayload, videoURL: URL, outp
     let safePrefix = sanitizePrefix(prefix, fallback: fallbackPrefix)
     let validationPrefix = "\(safePrefix)-transition"
 
-    return payload.events.enumerated().compactMap { offset, event in
+    let validEvents = payload.events.compactMap { event -> (Double, Double)? in
         let start = max(0.0, event.start - transitionValidationPaddingSeconds)
         let end = min(payload.duration, event.end + transitionValidationPaddingSeconds)
         let duration = end - start
         guard duration > 0 else {
             return nil
         }
+        return (start, duration)
+    }
 
+    let totalCount = validEvents.count
+
+    return validEvents.enumerated().map { offset, range in
         let outputIndex = offset + 1
-        let fileName = makeOutputFileName(prefix: validationPrefix, index: outputIndex, pathExtension: inputExtension)
+        let fileName = makeOutputFileName(prefix: validationPrefix, index: outputIndex, totalCount: totalCount, pathExtension: inputExtension)
         return FFmpegJob(
             index: outputIndex,
             inputURL: videoURL,
             outputURL: outputDirectoryURL.appendingPathComponent(fileName),
-            start: start,
-            duration: duration,
+            start: range.0,
+            duration: range.1,
             crop: crop
         )
     }

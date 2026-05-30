@@ -35,8 +35,8 @@ The app supports:
 
 - selecting a video file
 - selecting or editing the output directory
-- output naming with `prefix-01.ext`
-- validation clip naming with `prefix-transition-01.ext`
+- output naming with structured prefix parts; append `-01.ext` only when there are multiple output files
+- validation clip naming with `prefix-transition`; append `-01.ext` only when there are multiple validation clips
 - parsing scene transitions
 - showing transition rows and editable keep segments
 - splitting kept segments with adjustable concurrency
@@ -83,19 +83,17 @@ This project is no longer dependency-free on the Python side.
 
 ## Fade Strategy
 
-Fade removal is configurable in four levels:
+Fade removal is configurable in three levels:
 
 - `conservative`
 - `standard`
 - `aggressive`
-- `extreme`
 
 UI labels:
 
 - `保守`
 - `标准`
 - `激进`
-- `极激进`
 
 Each strategy has two layers of behavior:
 
@@ -108,15 +106,12 @@ The GUI currently exposes the manual padding seconds for every strategy directly
 
 Current default padding values in Swift and Python must stay aligned:
 
-- `conservative`: left `0.04`, right `0.12`
-- `standard`: left `0.08`, right `0.18`
-- `aggressive`: left `0.12`, right `0.24`
-- `extreme`: left `0.16`, right `0.32`
+- `conservative`: left `0.3`, right `0.3`
+- `standard`: left `0.5`, right `0.5`
+- `aggressive`: left `1.0`, right `1.0`
 
 Important intent:
 
-- left side should not be overly aggressive
-- right side should not be overly conservative
 - user may manually tune both values per strategy
 
 ## Detection Strategy
@@ -163,9 +158,24 @@ Transition validation export reuses the same ffmpeg execution path and argument 
 - it is driven by transition events, not by the editable keep-segment table
 - each transition validation clip expands the detected event range by `0.5` seconds on both sides
 - validation clip range must be clamped to `0...video-duration`
-- validation clip output naming uses `prefix-transition-01.ext`
+- validation clip output naming uses `prefix-transition.ext` for a single clip, or `prefix-transition-01.ext` / `-02.ext` / ... for multiple clips
 
 ## UI Notes
+
+The main window and worker windows are currently at the correct size and should not be resized again unless explicitly requested.
+
+The former large page header has been moved into the macOS window title area as the window subtitle so the content area keeps more vertical space.
+
+The output prefix area in `输入与输出` is a four-row layout:
+
+- it is rendered as a normal row inside the same two-column form grid as `视频文件` and `输出目录`, and its left label must stay aligned with those fields
+- row 1: radio buttons `第一视角` / `第三视角` / `自拍` / `固定视角` / `擦边`, default is `第一视角`
+- row 2: radio buttons `无脸` / `露脸`, default is `无脸`
+- row 3: user custom text field
+- row 4: current system date in `YYYYMMDD`
+- the four parts are joined with `-`
+- if there is only one exported file, the filename does not append a numeric suffix
+- if there are multiple exported files, the filename appends a two-digit sequence suffix such as `-01`
 
 The current fade control is a radio-button group, not a popup:
 
@@ -179,6 +189,8 @@ The split segment area is no longer a raw ffmpeg script text view.
 - rows remain visible even when disabled
 - disabled rows do not generate ffmpeg jobs
 - editing start/end time changes the real split job
+- if editing `开始时间` makes it greater than or equal to `结束时间`, the app should automatically move `结束时间` to `开始时间 + 60s`
+- if editing `结束时间` keeps it greater than `开始时间`, keep the current behavior unchanged
 - clicking a transition row should still highlight related keep-segment rows
 - the title area contains a master checkbox labeled `全选`
 - the master checkbox supports all-on, all-off, and mixed state
@@ -232,7 +244,7 @@ App detector summary:
 Useful fade validation example:
 
 ```bash
-./.venv/bin/python detect_scene_changes.py test.mp4 --json --fade-removal-profile aggressive --fade-left-padding-seconds 0.12 --fade-right-padding-seconds 0.24
+./.venv/bin/python detect_scene_changes.py test.mp4 --json --fade-removal-profile standard --fade-left-padding-seconds 0.5 --fade-right-padding-seconds 0.5
 ```
 
 ## Editing Notes
@@ -257,10 +269,10 @@ For `test.mp4`, the detector should currently find:
 - cuts near `3.88`, `6.04`, `10.44`
 - one black transition around `7.76-8.84`
 
-For the default `aggressive` fade padding:
+For the default `standard` fade padding:
 
-- left padding is lighter than the previous build
-- right padding is stronger than the previous build
+- left padding is `0.5`
+- right padding is `0.5`
 
 If fade behavior is changed, verify both:
 
