@@ -67,6 +67,11 @@ struct TransitionEvent: Decodable {
     let source: String
 }
 
+struct SelectableTransitionEvent {
+    let event: TransitionEvent
+    var isSelected: Bool
+}
+
 struct KeepSegment: Decodable {
     let index: Int
     let start: Double
@@ -80,9 +85,23 @@ struct EditableSegment {
     var start: Double
     var end: Double?
     var isManual: Bool
+    var sourceKeepSegmentIndices: [Int]
+    var isMergedFollower: Bool
+
+    var isAutomatic: Bool {
+        !sourceKeepSegmentIndices.isEmpty
+    }
+
+    var isUserToggleable: Bool {
+        !isMergedFollower
+    }
 
     func resolvedEnd(videoDuration: Double?) -> Double? {
         end ?? videoDuration
+    }
+
+    func containsSourceKeepSegment(index: Int) -> Bool {
+        sourceKeepSegmentIndices.contains(index)
     }
 
     func duration(videoDuration: Double?) -> Double? {
@@ -334,6 +353,12 @@ func makeOutputFileName(prefix: String, index: Int, totalCount: Int, pathExtensi
     return "\(baseName).\(pathExtension)"
 }
 
+func buildSelectableTransitionEvents(payload: DetectorPayload) -> [SelectableTransitionEvent] {
+    payload.events.map { event in
+        SelectableTransitionEvent(event: event, isSelected: true)
+    }
+}
+
 func buildEditableSegments(payload: DetectorPayload) -> [EditableSegment] {
     payload.keepSegments.map { segment in
         let editable = EditableSegment(
@@ -341,14 +366,18 @@ func buildEditableSegments(payload: DetectorPayload) -> [EditableSegment] {
             isEnabled: true,
             start: segment.start,
             end: segment.end,
-            isManual: false
+            isManual: false,
+            sourceKeepSegmentIndices: [segment.index],
+            isMergedFollower: false
         )
         return EditableSegment(
             index: editable.index,
             isEnabled: editable.shouldDefaultEnable(videoDuration: payload.duration),
             start: editable.start,
             end: editable.end,
-            isManual: editable.isManual
+            isManual: editable.isManual,
+            sourceKeepSegmentIndices: editable.sourceKeepSegmentIndices,
+            isMergedFollower: editable.isMergedFollower
         )
     }
 }
@@ -387,13 +416,13 @@ func buildJobs(segments: [EditableSegment], videoURL: URL, outputDirectoryURL: U
     }
 }
 
-func buildTransitionValidationJobs(payload: DetectorPayload, videoURL: URL, outputDirectoryURL: URL, prefix: String, crop: CropParameters?) -> [FFmpegJob] {
+func buildTransitionValidationJobs(events: [TransitionEvent], payload: DetectorPayload, videoURL: URL, outputDirectoryURL: URL, prefix: String, crop: CropParameters?) -> [FFmpegJob] {
     let inputExtension = videoURL.pathExtension
     let fallbackPrefix = videoURL.deletingPathExtension().lastPathComponent
     let safePrefix = sanitizePrefix(prefix, fallback: fallbackPrefix)
     let validationPrefix = "\(safePrefix)-transition"
 
-    let validEvents = payload.events.compactMap { event -> (Double, Double)? in
+    let validEvents = events.compactMap { event -> (Double, Double)? in
         let start = max(0.0, event.start - transitionValidationPaddingSeconds)
         let end = min(payload.duration, event.end + transitionValidationPaddingSeconds)
         let duration = end - start

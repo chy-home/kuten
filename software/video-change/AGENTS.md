@@ -38,7 +38,8 @@ The app supports:
 - output naming with structured prefix parts; append `-01.ext` only when there are multiple output files
 - validation clip naming with `prefix-transition`; append `-01.ext` only when there are multiple validation clips
 - parsing scene transitions
-- showing transition rows and editable keep segments
+- showing selectable transition rows and editable keep segments
+- manually deselecting misdetected transition rows to remove a split boundary while keeping related split-segment rows visible with disabled/greyed merged-follower styling
 - splitting kept segments with adjustable concurrency
 - exporting transition validation clips with adjustable concurrency
 - drag/drop for file and directory paths
@@ -48,6 +49,7 @@ The app supports:
 - per-strategy manual left/right fade padding seconds
 - per-segment enable/disable
 - per-segment editable start/end time
+- per-segment dynamic duration display
 - a master checkbox for bulk enable/disable of all split segments
 
 ## Runtime
@@ -157,7 +159,7 @@ Important details:
 Transition validation export reuses the same ffmpeg execution path and argument order.
 
 - it is a separate export action from normal split export
-- it is driven by transition events, not by the editable keep-segment table
+- it is driven by the currently selected transition events, not by the editable keep-segment table
 - each transition validation clip expands the detected event range by `0.5` seconds on both sides
 - validation clip range must be clamped to `0...video-duration`
 - validation clip output naming uses `prefix-transition.ext` for a single clip, or `prefix-transition-01.ext` / `-02.ext` / ... for multiple clips
@@ -184,13 +186,25 @@ The current fade control is a radio-button group, not a popup:
 - one radio button per fade strategy
 - editable left/right second fields per strategy
 
+The transition result area is a selectable table.
+
+- columns are `选中`, `#`, `类型`, `开始时间`, `结束时间`, `时长`, `来源`
+- deselecting a transition row keeps the row visible but removes that transition from validation export
+- deselecting a transition row should also remove that split boundary in the split table
+- when a split boundary is removed, the split table keeps all related rows visible:
+  - one automatic leader row shows the merged effective time range
+  - the following automatic rows remain visible as disabled grey follower rows
+- reselecting that transition row should restore the split boundary between the adjacent automatic keep segments
+
 The split segment area is no longer a raw ffmpeg script text view.
 
 - it is a table of keep segments
-- columns are `启用`, `开始时间`, `结束时间`
+- columns are `启用`, `开始时间`, `结束时间`, `时长`
 - rows remain visible even when disabled
 - disabled rows do not generate ffmpeg jobs
+- merged-follower rows stay visible, are unchecked, are greyed out, and are not directly editable
 - editing start/end time changes the real split job
+- the `时长` column is computed dynamically from `结束时间 - 开始时间`
 - if editing `开始时间` makes it greater than or equal to `结束时间`, the app should automatically move `结束时间` to `开始时间 + 60s`
 - if editing `结束时间` keeps it greater than `开始时间`, keep the current behavior unchanged
 - clicking a transition row should still highlight related keep-segment rows
@@ -200,7 +214,7 @@ The split segment area is no longer a raw ffmpeg script text view.
 The transition result panel now also has a dedicated button:
 
 - button label is `验证导出`
-- it exports all detected transition clips for manual inspection
+- it exports the currently selected transition clips for manual inspection
 - it must not mutate the keep-segment table or replace split-job data
 - it reuses the same worker-window execution flow as `分解`
 
@@ -220,7 +234,7 @@ Build the app:
 Run the built app:
 
 ```bash
-open "/Users/cyril/git/video-change/VideoChange.app"
+open "/Users/cyril/git/kuten/software/video-change/VideoChange.app"
 ```
 
 Build-time expectation:
@@ -263,7 +277,9 @@ Useful fade validation example:
 - Keep UI labels and Python argument values aligned for fade strategy names.
 - Worker-window command preview and actual ffmpeg execution arguments must match.
 - The segment table is the source of truth for split jobs; manual edits must flow into execution.
+- Transition row selection must stay synced with automatic keep-segment merge/split display behavior, including disabled grey merged-follower rows.
 - Transition validation export must remain separate from the segment-table split-job source of truth.
+- Transition validation export must respect the current transition-row selection state.
 - The master segment checkbox state must stay synced with individual segment rows.
 - `crop` must remain a single string input in `w:h:x:y` format.
 - `skip-start-seconds` support must be preserved end-to-end.
@@ -275,32 +291,21 @@ Useful fade validation example:
 
 For `test.mp4`, the detector should currently find:
 
-- one fade near `1.5s`
-- cuts near `3.88`, `6.04`, `10.44`
-- one black transition around `7.76-8.84`
+- two `cut` events near `5.167s` and `6.2s`
+- no `fade` events
+- no `black` events
+- three keep segments
 
 For the default `standard` fade padding:
 
 - left padding is `0.5`
 - right padding is `0.5`
 
-If fade behavior is changed, verify both:
+App/runtime validation for `test.mp4` should currently pass:
 
-- the `1.5s` fade no longer leaves visible trailing transition content
-- normal content is not excessively removed on the left side
-
-For `test.MOV`, the current validation sample used during the May 30, 2026 fix, the detector should currently find:
-
-- two `cut` events near `5.167s` and `6.2s`
-- no `fade` events
-- no `black` events
-- three keep segments
-
-App/runtime validation for `test.MOV` should currently pass:
-
-- `./.venv/bin/python detect_scene_changes.py test.MOV --json`
+- `./.venv/bin/python detect_scene_changes.py test.mp4 --json`
 - `./VideoChange.app/Contents/MacOS/VideoChange --self-test`
-- `./VideoChange.app/Contents/MacOS/VideoChange --detect-summary test.MOV`
+- `./VideoChange.app/Contents/MacOS/VideoChange --detect-summary test.mp4`
 
 
 

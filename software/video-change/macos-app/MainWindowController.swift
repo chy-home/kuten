@@ -133,6 +133,8 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     private var isProgrammaticallyUpdatingVideoField = false
     private var isProgrammaticallyUpdatingFadeFields = false
     private var detectorPayload: DetectorPayload?
+    private var selectableEvents: [SelectableTransitionEvent] = []
+    private var automaticSegmentEnabledPreferences: [Int: Bool] = [:]
     private var editableSegments: [EditableSegment] = []
     private var generatedJobs: [FFmpegJob] = []
     private var splitCoordinator: SplitCoordinator?
@@ -377,7 +379,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         panel.translatesAutoresizingMaskIntoConstraints = false
 
         let title = makeSectionTitle("换场结果")
-        let subtitle = NSTextField(labelWithString: "展示开始时间、结束时间、时长和换场类型。")
+        let subtitle = NSTextField(labelWithString: "支持取消误判换场；取消后会同步合并下方分解片段。")
         subtitle.font = .systemFont(ofSize: 13)
         subtitle.textColor = .secondaryLabelColor
 
@@ -420,7 +422,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         panel.translatesAutoresizingMaskIntoConstraints = false
 
         let title = makeSectionTitle("分解片段")
-        let subtitle = NSTextField(labelWithString: "显示启用、开始时间、结束时间；支持手动修改和禁用。")
+        let subtitle = NSTextField(labelWithString: "显示启用、开始时间、结束时间和时长；支持手动修改和禁用。")
         subtitle.font = .systemFont(ofSize: 13)
         subtitle.textColor = .secondaryLabelColor
 
@@ -582,6 +584,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         eventTableView.dataSource = self
 
         let columns: [(String, String, CGFloat)] = [
+            ("selected", "选中", 54),
             ("index", "#", 44),
             ("type", "类型", 72),
             ("start", "开始时间", 118),
@@ -626,6 +629,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             ("enabled", "启用", 62),
             ("start", "开始时间", 102),
             ("end", "结束时间", 102),
+            ("duration", "时长", 78),
         ]
 
         for (identifier, title, width) in columns {
@@ -642,19 +646,18 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     private func highlightSegmentRows(forEventAt row: Int?) {
         guard
             let row,
-            let payload = detectorPayload,
             row >= 0,
-            row < payload.events.count
+            row < selectableEvents.count
         else {
             segmentTableView.deselectAll(nil)
             return
         }
 
-        let event = payload.events[row]
+        let event = selectableEvents[row].event
         let relatedIndices = Set(relatedKeepSegmentIndices(for: event))
         let rowIndexes = IndexSet(
             editableSegments.enumerated().compactMap { index, segment in
-                relatedIndices.contains(segment.index) ? index : nil
+                !relatedIndices.isDisjoint(with: segment.sourceKeepSegmentIndices) ? index : nil
             }
         )
 
@@ -669,49 +672,233 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         }
     }
 
+    private func selectedTransitionEvents() -> [TransitionEvent] {
+        selectableEvents.compactMap { item in
+            item.isSelected ? item.event : nil
+        }
+    }
+
+    private func updateSummaryText() {
+        if detectorPayload != nil {
+            let totalEvents = selectableEvents.count
+            let selectedEventsCount = selectedTransitionEvents().count
+            let selectedEventsLabel = totalEvents == selectedEventsCount
+                ? "\(totalEvents)"
+                : "\(selectedEventsCount) / \(totalEvents)"
+            let effectiveSegmentCount = editableSegments.filter(\.isUserToggleable).count
+            summaryLabel.stringValue = "换场 \(selectedEventsLabel) 个，保留片段 \(effectiveSegmentCount) 个"
+        } else if !editableSegments.isEmpty {
+            summaryLabel.stringValue = "手动片段 \(editableSegments.count) 个"
+        } else {
+            summaryLabel.stringValue = "等待解析"
+        }
+    }
+
     private func relatedKeepSegmentIndices(for event: TransitionEvent) -> [Int] {
+        let neighbors = adjacentKeepSegments(for: event)
+        var indices: [Int] = []
+        if let before = neighbors.before {
+            indices.append(before.index)
+        }
+        if let after = neighbors.after, !indices.contains(after.index) {
+            indices.append(after.index)
+        }
+        return indices
+    }
+
+    private func adjacentKeepSegments(for event: TransitionEvent) -> (before: KeepSegment?, after: KeepSegment?) {
         guard let payload = detectorPayload else {
-            return []
+            return (nil, nil)
         }
 
-        var matched: [Int] = []
         let epsilon = 0.0005
+        var exactBefore: KeepSegment?
+        var exactAfter: KeepSegment?
+        var closestBefore: (segment: KeepSegment, gap: Double)?
+        var closestAfter: (segment: KeepSegment, gap: Double)?
 
         for segment in payload.keepSegments {
-            if abs(segment.end - event.start) <= epsilon || abs(segment.start - event.end) <= epsilon {
-                matched.append(segment.index)
-            }
-        }
-
-        if !matched.isEmpty {
-            return matched
-        }
-
-        var closestBefore: (index: Int, gap: Double)?
-        var closestAfter: (index: Int, gap: Double)?
-        for segment in payload.keepSegments {
-            if segment.end <= event.start {
+            if abs(segment.end - event.start) <= epsilon {
+                exactBefore = segment
+            } else if segment.end <= event.start {
                 let gap = event.start - segment.end
                 if closestBefore == nil || gap < closestBefore!.gap {
-                    closestBefore = (segment.index, gap)
+                    closestBefore = (segment, gap)
                 }
             }
-            if segment.start >= event.end {
+
+            if abs(segment.start - event.end) <= epsilon {
+                exactAfter = segment
+            } else if segment.start >= event.end {
                 let gap = segment.start - event.end
                 if closestAfter == nil || gap < closestAfter!.gap {
-                    closestAfter = (segment.index, gap)
+                    closestAfter = (segment, gap)
                 }
             }
         }
 
-        var fallback: [Int] = []
-        if let before = closestBefore {
-            fallback.append(before.index)
+        return (
+            exactBefore ?? closestBefore?.segment,
+            exactAfter ?? closestAfter?.segment
+        )
+    }
+
+    private func resetAutomaticSegmentEnabledPreferences(from segments: [EditableSegment]) {
+        automaticSegmentEnabledPreferences = [:]
+        for segment in segments where segment.isAutomatic {
+            for sourceIndex in segment.sourceKeepSegmentIndices {
+                automaticSegmentEnabledPreferences[sourceIndex] = segment.isEnabled
+            }
         }
-        if let after = closestAfter, !fallback.contains(after.index) {
-            fallback.append(after.index)
+    }
+
+    private func buildAutomaticSegment(rowIndex: Int, sourceKeepSegmentIndices: [Int], isEnabled: Bool, isMergedFollower: Bool) -> EditableSegment? {
+        guard let payload = detectorPayload else {
+            return nil
         }
-        return fallback
+
+        let uniqueSortedIndices = Array(Set(sourceKeepSegmentIndices)).sorted()
+        guard
+            let firstIndex = uniqueSortedIndices.first,
+            let lastIndex = uniqueSortedIndices.last
+        else {
+            return nil
+        }
+
+        let keepSegmentsByIndex = Dictionary(uniqueKeysWithValues: payload.keepSegments.map { ($0.index, $0) })
+        guard
+            let firstSegment = keepSegmentsByIndex[firstIndex],
+            let lastSegment = keepSegmentsByIndex[lastIndex]
+        else {
+            return nil
+        }
+
+        let editable = EditableSegment(
+            index: rowIndex,
+            isEnabled: isEnabled,
+            start: firstSegment.start,
+            end: lastSegment.end,
+            isManual: false,
+            sourceKeepSegmentIndices: uniqueSortedIndices,
+            isMergedFollower: isMergedFollower
+        )
+        return EditableSegment(
+            index: editable.index,
+            isEnabled: !isMergedFollower && isEnabled && editable.shouldDefaultEnable(videoDuration: payload.duration),
+            start: editable.start,
+            end: editable.end,
+            isManual: editable.isManual,
+            sourceKeepSegmentIndices: editable.sourceKeepSegmentIndices,
+            isMergedFollower: editable.isMergedFollower
+        )
+    }
+
+    private func deselectedTransitionBoundaryKeys() -> Set<String> {
+        var keys = Set<String>()
+        for selectableEvent in selectableEvents where !selectableEvent.isSelected {
+            let neighbors = adjacentKeepSegments(for: selectableEvent.event)
+            guard let beforeIndex = neighbors.before?.index, let afterIndex = neighbors.after?.index else {
+                continue
+            }
+            keys.insert(boundaryKey(beforeIndex: beforeIndex, afterIndex: afterIndex))
+        }
+        return keys
+    }
+
+    private func boundaryKey(beforeIndex: Int, afterIndex: Int) -> String {
+        "\(beforeIndex)->\(afterIndex)"
+    }
+
+    private func preferredEnabledState(for sourceKeepSegmentIndices: [Int]) -> Bool {
+        sourceKeepSegmentIndices.contains { automaticSegmentEnabledPreferences[$0] ?? true }
+    }
+
+    private func rebuildAutomaticSegmentsFromSelection() {
+        guard let payload = detectorPayload else {
+            return
+        }
+
+        let manualSegments = editableSegments.filter(\.isManual)
+        let keepSegments = payload.keepSegments.sorted { $0.index < $1.index }
+        guard !keepSegments.isEmpty else {
+            editableSegments = manualSegments
+            return
+        }
+
+        if automaticSegmentEnabledPreferences.isEmpty {
+            let initialSegments = buildEditableSegments(payload: payload)
+            resetAutomaticSegmentEnabledPreferences(from: initialSegments)
+        }
+
+        let mergedBoundaryKeys = deselectedTransitionBoundaryKeys()
+        var groups: [[KeepSegment]] = []
+        var currentGroup: [KeepSegment] = []
+
+        for segment in keepSegments {
+            if currentGroup.isEmpty {
+                currentGroup = [segment]
+                continue
+            }
+
+            let previousSegment = currentGroup[currentGroup.count - 1]
+            if mergedBoundaryKeys.contains(boundaryKey(beforeIndex: previousSegment.index, afterIndex: segment.index)) {
+                currentGroup.append(segment)
+            } else {
+                groups.append(currentGroup)
+                currentGroup = [segment]
+            }
+        }
+
+        if !currentGroup.isEmpty {
+            groups.append(currentGroup)
+        }
+
+        var automaticSegments: [EditableSegment] = []
+        for group in groups {
+            let sourceIndices = group.map(\.index)
+            let leaderIndex = group[0].index
+            if let leaderSegment = buildAutomaticSegment(
+                rowIndex: leaderIndex,
+                sourceKeepSegmentIndices: sourceIndices,
+                isEnabled: preferredEnabledState(for: sourceIndices),
+                isMergedFollower: false
+            ) {
+                automaticSegments.append(leaderSegment)
+            }
+
+            for follower in group.dropFirst() {
+                if let followerSegment = buildAutomaticSegment(
+                    rowIndex: follower.index,
+                    sourceKeepSegmentIndices: [follower.index],
+                    isEnabled: false,
+                    isMergedFollower: true
+                ) {
+                    automaticSegments.append(followerSegment)
+                }
+            }
+        }
+
+        editableSegments = automaticSegments + manualSegments
+    }
+
+    private func applyEventSelectionChange(at row: Int, isSelected: Bool) {
+        guard row >= 0, row < selectableEvents.count else {
+            return
+        }
+
+        let event = selectableEvents[row].event
+        let neighbors = adjacentKeepSegments(for: event)
+        guard
+            neighbors.before?.index != nil,
+            neighbors.after?.index != nil
+        else {
+            rebuildJobsFromEditableSegments(autoDisableInvalidSegments: true)
+            return
+        }
+
+        selectableEvents[row].isSelected = isSelected
+        rebuildAutomaticSegmentsFromSelection()
+        rebuildJobsFromEditableSegments(autoDisableInvalidSegments: true)
     }
 
     private func makeSectionTitle(_ text: String) -> NSTextField {
@@ -746,6 +933,16 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         label.font = .systemFont(ofSize: 13)
         label.textColor = .secondaryLabelColor
         return label
+    }
+
+    private func segmentTextColor(_ segment: EditableSegment) -> NSColor {
+        if segment.isMergedFollower {
+            return .tertiaryLabelColor
+        }
+        if !segment.isEnabled {
+            return .secondaryLabelColor
+        }
+        return .labelColor
     }
 
     private func makeHorizontalRow(_ views: [NSView]) -> NSStackView {
@@ -978,8 +1175,10 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     }
 
     private func refreshGeneratedJobs() {
-        if editableSegments.isEmpty, let detectorPayload {
+        if editableSegments.isEmpty, let detectorPayload, selectableEvents.isEmpty {
+            selectableEvents = buildSelectableTransitionEvents(payload: detectorPayload)
             editableSegments = buildEditableSegments(payload: detectorPayload)
+            resetAutomaticSegmentEnabledPreferences(from: editableSegments)
         }
 
         guard let selectedVideoURL, let outputDirectoryURL = resolvedOutputDirectoryURL() else {
@@ -988,13 +1187,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             updateSegmentMasterCheckboxState()
             updateSplitButtonState()
             updateNamingPreview()
-            if let detectorPayload {
-                summaryLabel.stringValue = "换场 \(detectorPayload.events.count) 个，保留片段 \(editableSegments.count) 个"
-            } else if !editableSegments.isEmpty {
-                summaryLabel.stringValue = "手动片段 \(editableSegments.count) 个"
-            } else {
-                summaryLabel.stringValue = "等待解析"
-            }
+            updateSummaryText()
             return
         }
 
@@ -1007,11 +1200,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             videoDuration: effectiveVideoDuration()
         )
 
-        if let detectorPayload {
-            summaryLabel.stringValue = "换场 \(detectorPayload.events.count) 个，保留片段 \(editableSegments.count) 个"
-        } else {
-            summaryLabel.stringValue = "手动片段 \(editableSegments.count) 个"
-        }
+        updateSummaryText()
         eventTableView.reloadData()
         segmentTableView.reloadData()
         updateSegmentMasterCheckboxState()
@@ -1022,7 +1211,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     private func updateSplitButtonState() {
         splitButton.isEnabled = splitCoordinator == nil && !editableSegments.isEmpty
-        validateTransitionsButton.isEnabled = splitCoordinator == nil && !(detectorPayload?.events.isEmpty ?? true)
+        validateTransitionsButton.isEnabled = splitCoordinator == nil && !selectedTransitionEvents().isEmpty
         addSegmentButton.isEnabled = splitCoordinator == nil
         stopButton.isEnabled = true
     }
@@ -1061,6 +1250,8 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     private func clearDetectionResults() {
         detectorPayload = nil
+        selectableEvents = []
+        automaticSegmentEnabledPreferences = [:]
         probedVideoDuration = nil
         editableSegments = []
         generatedJobs = []
@@ -1082,48 +1273,83 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     private func normalizeSegmentEnabledStates() {
         let videoDuration = effectiveVideoDuration()
         for index in editableSegments.indices {
+            if editableSegments[index].isMergedFollower {
+                editableSegments[index].isEnabled = false
+                continue
+            }
             if !editableSegments[index].shouldDefaultEnable(videoDuration: videoDuration) {
                 editableSegments[index].isEnabled = false
+                if editableSegments[index].isAutomatic {
+                    for sourceIndex in editableSegments[index].sourceKeepSegmentIndices {
+                        automaticSegmentEnabledPreferences[sourceIndex] = false
+                    }
+                }
             }
         }
     }
 
     private func updateSegmentMasterCheckboxState() {
-        guard !editableSegments.isEmpty else {
+        let toggleableSegments = editableSegments.filter(\.isUserToggleable)
+        guard !toggleableSegments.isEmpty else {
             segmentMasterCheckbox.state = .off
             segmentMasterCheckbox.isEnabled = false
             return
         }
 
         segmentMasterCheckbox.isEnabled = true
-        let enabledCount = editableSegments.filter(\.isEnabled).count
+        let enabledCount = toggleableSegments.filter(\.isEnabled).count
         if enabledCount == 0 {
             segmentMasterCheckbox.state = .off
-        } else if enabledCount == editableSegments.count {
+        } else if enabledCount == toggleableSegments.count {
             segmentMasterCheckbox.state = .on
         } else {
             segmentMasterCheckbox.state = .mixed
         }
     }
 
-    @objc private func segmentEnabledChanged(_ sender: NSButton) {
+    @objc private func eventSelectedChanged(_ sender: NSButton) {
         let row = sender.tag
-        guard row >= 0, row < editableSegments.count else {
+        guard row >= 0, row < selectableEvents.count else {
             return
         }
-        editableSegments[row].isEnabled = sender.state == .on
+
+        let isSelected = sender.state == .on
+        applyEventSelectionChange(at: row, isSelected: isSelected)
+    }
+
+    @objc private func segmentEnabledChanged(_ sender: NSButton) {
+        let row = sender.tag
+        guard row >= 0, row < editableSegments.count, editableSegments[row].isUserToggleable else {
+            return
+        }
+        let isEnabled = sender.state == .on
+        editableSegments[row].isEnabled = isEnabled
+        if editableSegments[row].isAutomatic {
+            for sourceIndex in editableSegments[row].sourceKeepSegmentIndices {
+                automaticSegmentEnabledPreferences[sourceIndex] = isEnabled
+            }
+        }
         rebuildJobsFromEditableSegments()
     }
 
     @objc private func segmentMasterCheckboxChanged(_ sender: NSButton) {
-        guard !editableSegments.isEmpty else {
+        guard editableSegments.contains(where: \.isUserToggleable) else {
             updateSegmentMasterCheckboxState()
             return
         }
 
         let shouldEnableAll = sender.state != .off
         for index in editableSegments.indices {
+            guard editableSegments[index].isUserToggleable else {
+                editableSegments[index].isEnabled = false
+                continue
+            }
             editableSegments[index].isEnabled = shouldEnableAll
+            if editableSegments[index].isAutomatic {
+                for sourceIndex in editableSegments[index].sourceKeepSegmentIndices {
+                    automaticSegmentEnabledPreferences[sourceIndex] = shouldEnableAll
+                }
+            }
         }
         rebuildJobsFromEditableSegments()
     }
@@ -1142,7 +1368,9 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                 isEnabled: end > start,
                 start: start,
                 end: end,
-                isManual: true
+                isManual: true,
+                sourceKeepSegmentIndices: [],
+                isMergedFollower: false
             )
         )
         rebuildJobsFromEditableSegments()
@@ -1167,6 +1395,12 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
     @objc private func segmentTimeFieldChanged(_ sender: SegmentTimeField) {
         let row = sender.segmentRow
         guard row >= 0, row < editableSegments.count else {
+            return
+        }
+        guard !editableSegments[row].isMergedFollower else {
+            sender.stringValue = sender.kind == .start
+                ? formatSegmentStartHMS(editableSegments[row].start)
+                : formatOptionalSegmentEndHMS(editableSegments[row].end)
             return
         }
 
@@ -1501,8 +1735,10 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                     switch result {
                     case .success(let payload):
                         self.detectorPayload = payload
+                        self.selectableEvents = buildSelectableTransitionEvents(payload: payload)
                         self.probedVideoDuration = payload.duration
                         self.editableSegments = buildEditableSegments(payload: payload)
+                        self.resetAutomaticSegmentEnabledPreferences(from: self.editableSegments)
                         self.refreshGeneratedJobs()
                         self.statusLabel.stringValue = "解析完成：\(payload.events.count) 个换场，\(payload.keepSegments.count) 个保留片段，Fade=\(strategy.displayName) L=\(String(format: "%.2f", padding.leftSeconds))s R=\(String(format: "%.2f", padding.rightSeconds))s。"
                     case .failure(let error):
@@ -1567,6 +1803,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             }
 
             return buildTransitionValidationJobs(
+                events: self.selectedTransitionEvents(),
                 payload: payload,
                 videoURL: videoURL,
                 outputDirectoryURL: outputDirectoryURL,
@@ -1661,7 +1898,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
 
     func numberOfRows(in tableView: NSTableView) -> Int {
         if tableView == eventTableView {
-            return detectorPayload?.events.count ?? 0
+            return selectableEvents.count
         }
         if tableView == segmentTableView {
             return editableSegments.count
@@ -1709,7 +1946,38 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
         }
 
         if tableView == eventTableView {
-            guard let event = detectorPayload?.events[row] else {
+            guard row >= 0, row < selectableEvents.count else {
+                return nil
+            }
+            let selectableEvent = selectableEvents[row]
+            let event = selectableEvent.event
+
+            switch identifier.rawValue {
+            case "selected":
+                let buttonIdentifier = NSUserInterfaceItemIdentifier("event-selected")
+                let button: NSButton
+                if let reused = tableView.makeView(withIdentifier: buttonIdentifier, owner: nil) as? NSButton {
+                    button = reused
+                } else {
+                    button = NSButton(checkboxWithTitle: "", target: self, action: #selector(eventSelectedChanged(_:)))
+                    button.identifier = buttonIdentifier
+                }
+                button.tag = row
+                button.state = selectableEvent.isSelected ? .on : .off
+                return button
+            case "index":
+                break
+            case "type":
+                break
+            case "start":
+                break
+            case "end":
+                break
+            case "duration":
+                break
+            case "source":
+                break
+            default:
                 return nil
             }
 
@@ -1740,6 +2008,7 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
             default:
                 textField.stringValue = ""
             }
+            textField.textColor = selectableEvent.isSelected ? .labelColor : .secondaryLabelColor
             return textField
         }
 
@@ -1759,11 +2028,32 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                 }
                 button.tag = row
                 button.state = segment.isEnabled ? .on : .off
+                button.isEnabled = segment.isUserToggleable
+                button.contentTintColor = segment.isMergedFollower ? .tertiaryLabelColor : nil
                 if let cell = button.superview {
                     cell.wantsLayer = true
                     cell.layer?.backgroundColor = segment.isManual ? manualBackgroundColor.cgColor : NSColor.clear.cgColor
                 }
                 return button
+            case "duration":
+                let cellIdentifier = NSUserInterfaceItemIdentifier("segment-duration")
+                let textField: NSTextField
+                if let cell = tableView.makeView(withIdentifier: cellIdentifier, owner: nil) as? NSTextField {
+                    textField = cell
+                } else {
+                    textField = NSTextField(labelWithString: "")
+                    textField.identifier = cellIdentifier
+                    textField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+                    textField.alignment = .center
+                    textField.lineBreakMode = .byTruncatingTail
+                }
+                if let duration = segment.duration(videoDuration: effectiveVideoDuration()) {
+                    textField.stringValue = formatShortSeconds(duration)
+                } else {
+                    textField.stringValue = ""
+                }
+                textField.textColor = segmentTextColor(segment)
+                return textField
             case "start", "end":
                 let isEndColumn = identifier.rawValue == "end"
                 let containerIdentifier = NSUserInterfaceItemIdentifier("segment-container-\(identifier.rawValue)")
@@ -1829,9 +2119,13 @@ final class MainWindowController: NSWindowController, NSTextFieldDelegate, Split
                 field.stringValue = identifier.rawValue == "start"
                     ? formatSegmentStartHMS(segment.start)
                     : formatOptionalSegmentEndHMS(segment.end)
-                field.textColor = .labelColor
+                field.textColor = segmentTextColor(segment)
+                field.isEditable = !segment.isMergedFollower
+                field.isSelectable = !segment.isMergedFollower
                 field.drawsBackground = true
-                field.backgroundColor = segment.isManual ? manualBackgroundColor : .textBackgroundColor
+                field.backgroundColor = segment.isManual
+                    ? manualBackgroundColor
+                    : (segment.isMergedFollower ? NSColor.controlBackgroundColor : .textBackgroundColor)
                 if let deleteButton {
                     deleteButton.tag = row
                     deleteButton.isHidden = !(segment.isManual && hoveredManualSegmentRow == row)
