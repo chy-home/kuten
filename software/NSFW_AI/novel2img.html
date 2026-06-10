@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小说长图排版与水印导出工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        parchment: '#f7efe2',
+                        ink: '#2c231d',
+                        ember: '#a8672d',
+                        midnight: '#13131a'
+                    }
+                }
+            }
+        };
+    </script>
+    <style>
+        :root {
+            --page-bg:
+                radial-gradient(circle at top left, rgba(219, 174, 104, 0.18), transparent 28%),
+                radial-gradient(circle at 85% 15%, rgba(169, 94, 58, 0.16), transparent 24%),
+                linear-gradient(135deg, #f4ead8 0%, #efe4d0 52%, #f9f3e9 100%);
+            --panel-bg: rgba(255, 252, 246, 0.78);
+            --panel-border: rgba(121, 83, 44, 0.15);
+            --panel-shadow: 0 24px 60px rgba(77, 51, 30, 0.14);
+            --paper-shadow: 0 34px 80px rgba(70, 44, 18, 0.18);
+            --watermark-opacity: 0.09;
+            --watermark-size: 24px;
+        }
+
+        body {
+            min-height: 100vh;
+            background: var(--page-bg);
+            color: #241d18;
+            font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        }
+
+        .panel-surface {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            box-shadow: var(--panel-shadow);
+            backdrop-filter: blur(18px);
+        }
+
+        .field-input {
+            width: 100%;
+            border-radius: 1rem;
+            border: 1px solid rgba(111, 78, 49, 0.16);
+            background: rgba(255, 255, 255, 0.72);
+            padding: 0.9rem 1rem;
+            color: #2f261f;
+            outline: none;
+            transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+        }
+
+        .field-input:focus {
+            border-color: rgba(168, 103, 45, 0.55);
+            box-shadow: 0 0 0 4px rgba(212, 163, 115, 0.18);
+            transform: translateY(-1px);
+        }
+
+        .action-button {
+            border-radius: 9999px;
+            padding: 0.85rem 1.25rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
+        }
+
+        .action-button:hover {
+            transform: translateY(-1px);
+            filter: brightness(1.03);
+        }
+
+        .action-button:active {
+            transform: translateY(0);
+        }
+
+        .preview-shell {
+            position: relative;
+            padding: 1rem;
+            border-radius: 2rem;
+            background:
+                linear-gradient(145deg, rgba(255, 255, 255, 0.6), rgba(255, 247, 236, 0.24)),
+                rgba(255, 255, 255, 0.4);
+            border: 1px solid rgba(120, 86, 52, 0.16);
+        }
+
+        .preview-card {
+            position: relative;
+            overflow: hidden;
+            min-height: 560px;
+            border-radius: 1.75rem;
+            border: 1px solid rgba(124, 93, 60, 0.16);
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(245, 234, 220, 0.98)),
+                #f7efe2;
+            color: #2c231d;
+            box-shadow: var(--paper-shadow);
+            isolation: isolate;
+        }
+
+        .preview-card::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(circle at top right, rgba(255, 255, 255, 0.68), transparent 28%),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.16), transparent 24%);
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .preview-card[data-theme="dark"] {
+            border-color: rgba(214, 186, 145, 0.12);
+            background:
+                linear-gradient(180deg, rgba(31, 31, 41, 0.96), rgba(16, 16, 23, 0.98)),
+                #13131a;
+            color: #ece4da;
+            box-shadow: 0 34px 80px rgba(9, 9, 12, 0.42);
+        }
+
+        .preview-card[data-theme="dark"]::before {
+            background:
+                radial-gradient(circle at top left, rgba(255, 196, 132, 0.1), transparent 26%),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 18%);
+        }
+
+        #watermarkLayer {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            display: grid;
+            justify-items: center;
+            align-content: space-evenly;
+            gap: 2.75rem 1.25rem;
+            padding: 2.25rem 1rem;
+            overflow: hidden;
+            opacity: var(--watermark-opacity);
+            pointer-events: none;
+        }
+
+        .watermark-item {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: var(--watermark-size);
+            font-weight: 600;
+            line-height: 1.55;
+            letter-spacing: 0.18em;
+            white-space: pre-line;
+            text-align: center;
+            color: rgba(110, 87, 61, 0.4);
+            transform: rotate(-24deg);
+            text-shadow: 0 1px 0 rgba(255, 255, 255, 0.12);
+            user-select: none;
+        }
+
+        .preview-card[data-theme="dark"] .watermark-item {
+            color: rgba(246, 230, 211, 0.32);
+            text-shadow: none;
+        }
+
+        .preview-inner {
+            position: relative;
+            z-index: 2;
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 4rem 2rem 4.25rem;
+        }
+
+        .preview-label {
+            margin-bottom: 1.25rem;
+            text-align: center;
+            font-size: 0.8rem;
+            letter-spacing: 0.34em;
+            text-transform: uppercase;
+            color: rgba(111, 87, 62, 0.76);
+        }
+
+        .preview-card[data-theme="dark"] .preview-label {
+            color: rgba(232, 211, 186, 0.72);
+        }
+
+        #previewTitle {
+            margin: 0;
+            text-align: center;
+            font-size: clamp(2.1rem, 4vw, 3.25rem);
+            line-height: 1.18;
+            letter-spacing: 0.08em;
+            color: inherit;
+            font-family: "Iowan Old Style", "Palatino Linotype", "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+        }
+
+        #previewTitle[data-empty="true"] {
+            opacity: 0.68;
+        }
+
+        .title-divider {
+            width: 88px;
+            height: 1px;
+            margin: 1.25rem auto 1rem;
+            border: none;
+            background: linear-gradient(90deg, transparent, rgba(164, 103, 47, 0.8), transparent);
+        }
+
+        .preview-card[data-theme="dark"] .title-divider {
+            background: linear-gradient(90deg, transparent, rgba(245, 208, 166, 0.8), transparent);
+        }
+
+        #previewMeta {
+            margin-bottom: 2.6rem;
+            text-align: center;
+            font-size: 0.92rem;
+            letter-spacing: 0.12em;
+            color: rgba(108, 85, 60, 0.82);
+        }
+
+        .preview-card[data-theme="dark"] #previewMeta {
+            color: rgba(227, 205, 181, 0.78);
+        }
+
+        #previewContent {
+            font-family: "Iowan Old Style", "Palatino Linotype", "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+            font-size: 18px;
+            line-height: 2.05;
+            letter-spacing: 0.02em;
+            color: inherit;
+        }
+
+        #previewContent p {
+            margin: 0 0 1.3em;
+            text-indent: 2em;
+        }
+
+        #previewContent p:last-child {
+            margin-bottom: 0;
+        }
+
+        #previewContent .chapter-heading,
+        #previewContent .section-heading {
+            text-indent: 0;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+        }
+
+        #previewContent .chapter-heading {
+            margin: 2.1em 0 1em;
+            text-align: center;
+            font-size: 1.34em;
+            line-height: 1.5;
+        }
+
+        #previewContent .section-heading {
+            margin: 1.6em 0 0.9em;
+            font-size: 1.08em;
+            line-height: 1.65;
+        }
+
+        #previewContent p:first-child.chapter-heading,
+        #previewContent p:first-child.section-heading {
+            margin-top: 0;
+        }
+
+        #previewContent .placeholder {
+            margin: 0;
+            padding: 3rem 0 3.5rem;
+            text-indent: 0;
+            text-align: center;
+            line-height: 1.9;
+            color: rgba(112, 91, 70, 0.74);
+        }
+
+        .preview-card[data-theme="dark"] #previewContent .placeholder {
+            color: rgba(227, 204, 178, 0.7);
+        }
+
+        @media (max-width: 768px) {
+            .preview-card {
+                min-height: 500px;
+            }
+
+            .preview-inner {
+                padding: 3rem 1.3rem 3.2rem;
+            }
+
+            #previewMeta {
+                margin-bottom: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="mx-auto max-w-7xl px-4 py-8 lg:px-8">
+        <header class="mb-8 text-center">
+            <p class="mb-3 text-sm font-semibold uppercase tracking-[0.45em] text-amber-800/70">Novel Layout Studio</p>
+            <h1 class="mx-auto max-w-4xl text-4xl font-semibold tracking-[0.04em] text-stone-900 md:text-5xl">
+                小说长图排版、标题装饰与满铺水印导出
+            </h1>
+            <p class="mx-auto mt-4 max-w-3xl text-base leading-8 text-stone-700/80 md:text-lg">
+                输入标题和正文后，一次生成适合阅读与分享的排版长图。正文自动分段，水印会根据图片尺寸平铺覆盖整个内容区域。
+            </p>
+        </header>
+
+        <div class="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+            <section class="panel-surface rounded-[2rem] p-5 md:p-6">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-semibold tracking-[0.03em] text-stone-900">排版设置</h2>
+                    <p class="mt-2 text-sm leading-7 text-stone-700/75">
+                        标题会出现在导出图顶部，正文按段落重排，导出文件名也会优先使用标题。
+                    </p>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <label for="titleInput" class="mb-2 block text-sm font-semibold tracking-[0.08em] text-stone-700">标题</label>
+                        <input id="titleInput" type="text" placeholder="例如：雨夜归途" class="field-input">
+                    </div>
+                    <div>
+                        <label for="watermarkText" class="mb-2 block text-sm font-semibold tracking-[0.08em] text-stone-700">水印文字（支持换行）</label>
+                        <textarea id="watermarkText" rows="3" placeholder="每行输入一段水印内容，直接回车换行" class="field-input min-h-[96px] resize-y leading-7">QQ群：480191475
+邮箱：coco36d@outlook.com</textarea>
+                    </div>
+                    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+                        <div>
+                            <label for="watermarkOpacity" class="mb-2 block text-sm font-semibold tracking-[0.08em] text-stone-700">水印透明度</label>
+                            <input id="watermarkOpacity" type="number" step="0.05" min="0.05" max="0.6" value="0.09" class="field-input">
+                        </div>
+                        <div>
+                            <label for="fontSize" class="mb-2 block text-sm font-semibold tracking-[0.08em] text-stone-700">正文字号</label>
+                            <select id="fontSize" class="field-input">
+                                <option value="16px">16 px</option>
+                                <option value="18px" selected>18 px</option>
+                                <option value="20px">20 px</option>
+                                <option value="22px">22 px</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label for="themeMode" class="mb-2 block text-sm font-semibold tracking-[0.08em] text-stone-700">主题模式</label>
+                        <select id="themeMode" class="field-input">
+                            <option value="light" selected>羊皮纸浅色</option>
+                            <option value="dark">夜读深色</option>
+                        </select>
+                    </div>
+                    <div>
+                        <div class="mb-2 flex items-center justify-between">
+                            <label for="inputContent" class="block text-sm font-semibold tracking-[0.08em] text-stone-700">正文内容</label>
+                            <span id="liveStats" class="text-xs tracking-[0.14em] text-stone-600/75">0 段 · 0 字</span>
+                        </div>
+                        <textarea id="inputContent" rows="15" placeholder="请在这里粘贴小说正文。支持使用【大章】标题 或 【小节】标题 自动加粗排版。" class="field-input min-h-[320px] resize-y leading-8"></textarea>
+                    </div>
+                </div>
+
+                <div class="mt-6 flex flex-wrap gap-3">
+                    <button id="formatButton" class="action-button bg-amber-700 text-amber-50 shadow-[0_14px_30px_rgba(132,77,27,0.24)]">重排正文</button>
+                    <button id="exportButton" class="action-button bg-stone-900 text-stone-50 shadow-[0_14px_30px_rgba(21,21,21,0.18)]">导出长图</button>
+                    <button id="clearButton" class="action-button bg-white/85 text-stone-700 ring-1 ring-stone-300/70">清空</button>
+                </div>
+            </section>
+
+            <section class="panel-surface rounded-[2rem] p-4 md:p-6">
+                <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                        <h2 class="text-2xl font-semibold tracking-[0.03em] text-stone-900">排版预览</h2>
+                        <p class="mt-2 text-sm leading-7 text-stone-700/75">导出图片将使用下方卡片的实际样式与水印密度。</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button id="copyTextButton" class="rounded-full bg-white/85 px-4 py-2 text-xs font-semibold tracking-[0.08em] text-stone-700 shadow-sm ring-1 ring-stone-300/70 transition hover:translate-y-[-1px]">复制文本</button>
+                        <div class="rounded-full bg-white/75 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-stone-600 shadow-sm ring-1 ring-stone-200/80">
+                            Export Ready
+                        </div>
+                    </div>
+                </div>
+
+                <div class="preview-shell">
+                    <div id="previewCard" class="preview-card" data-theme="light">
+                        <div id="watermarkLayer"></div>
+                        <div class="preview-inner">
+                            <div class="preview-label">Story Draft</div>
+                            <h3 id="previewTitle" data-empty="true">未命名章节</h3>
+                            <hr class="title-divider">
+                            <div id="previewMeta">等待正文排版</div>
+                            <div id="previewContent">
+                                <p class="placeholder">正文预览会显示在这里。<br>输入标题与内容后，可直接导出带满铺水印的长图。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        const DRAFT_STORAGE_KEY = 'novel2img-draft:v1';
+
+        const elements = {
+            titleInput: document.getElementById('titleInput'),
+            watermarkText: document.getElementById('watermarkText'),
+            watermarkOpacity: document.getElementById('watermarkOpacity'),
+            fontSize: document.getElementById('fontSize'),
+            themeMode: document.getElementById('themeMode'),
+            inputContent: document.getElementById('inputContent'),
+            liveStats: document.getElementById('liveStats'),
+            previewCard: document.getElementById('previewCard'),
+            previewTitle: document.getElementById('previewTitle'),
+            previewMeta: document.getElementById('previewMeta'),
+            previewContent: document.getElementById('previewContent'),
+            watermarkLayer: document.getElementById('watermarkLayer'),
+            formatButton: document.getElementById('formatButton'),
+            exportButton: document.getElementById('exportButton'),
+            copyTextButton: document.getElementById('copyTextButton'),
+            clearButton: document.getElementById('clearButton')
+        };
+
+        function saveDraftCache() {
+            try {
+                localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
+                    title: elements.titleInput.value,
+                    content: elements.inputContent.value
+                }));
+            } catch (error) {
+                console.warn('保存本地草稿失败', error);
+            }
+        }
+
+        function restoreDraftCache() {
+            try {
+                const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+                if (!raw) {
+                    return;
+                }
+                const draft = JSON.parse(raw);
+                if (typeof draft?.title === 'string') {
+                    elements.titleInput.value = draft.title;
+                }
+                if (typeof draft?.content === 'string') {
+                    elements.inputContent.value = draft.content;
+                }
+            } catch (error) {
+                console.warn('恢复本地草稿失败', error);
+            }
+        }
+
+        function clearDraftCache() {
+            try {
+                localStorage.removeItem(DRAFT_STORAGE_KEY);
+            } catch (error) {
+                console.warn('清除本地草稿失败', error);
+            }
+        }
+
+        function getPreparedContent() {
+            const raw = elements.inputContent.value
+                .replace(/\r\n?/g, '\n')
+                .replace(/\u00a0/g, ' ')
+                .replace(/[ \t]+$/gm, '')
+                .replace(/^\s+/gm, '')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+
+            if (!raw) {
+                return { cleaned: '', paragraphs: [], characters: 0 };
+            }
+
+            const chunks = raw.includes('\n\n') ? raw.split(/\n\s*\n+/) : raw.split(/\n+/);
+            const paragraphs = chunks
+                .map((chunk) => chunk.replace(/[ \t]{2,}/g, ' ').replace(/\n+/g, ' ').trim())
+                .filter(Boolean);
+            const characters = paragraphs.join('').replace(/\s/g, '').length;
+
+            return { cleaned: raw, paragraphs, characters };
+        }
+
+        function getDisplayTitle() {
+            return elements.titleInput.value.trim();
+        }
+
+        function looksLikeStandaloneHeading(text) {
+            return text.length <= 60 && !/[。？！；]$/.test(text);
+        }
+
+        function getParagraphDisplayType(paragraph) {
+            const text = String(paragraph || '').trim();
+            const explicitChapter = text.match(/^【大章】\s*(.+)$/);
+            if (explicitChapter) {
+                return {
+                    className: 'chapter-heading',
+                    text: explicitChapter[1].trim() || '未命名大章'
+                };
+            }
+
+            const explicitSection = text.match(/^【小节】\s*(.+)$/);
+            if (explicitSection) {
+                return {
+                    className: 'section-heading',
+                    text: explicitSection[1].trim() || '未命名小节'
+                };
+            }
+
+            if (/^第[零〇一二三四五六七八九十百千万两\d]+[章回卷部篇]\s*.*$/.test(text) && looksLikeStandaloneHeading(text)) {
+                return {
+                    className: 'chapter-heading',
+                    text
+                };
+            }
+
+            if (/^第[零〇一二三四五六七八九十百千万两\d]+节\s*.*$/.test(text) && looksLikeStandaloneHeading(text)) {
+                return {
+                    className: 'section-heading',
+                    text
+                };
+            }
+
+            return {
+                className: '',
+                text
+            };
+        }
+
+        function normalizeWatermarkText(value) {
+            return String(value || '')
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/\\n/g, '\n')
+                .replace(/\r\n?/g, '\n')
+                .split('\n')
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .join('\n')
+                .trim();
+        }
+
+        function getWatermarkMetrics(text) {
+            const lines = text.split('\n').filter(Boolean);
+            return {
+                lineCount: Math.max(1, lines.length),
+                longestLineLength: lines.reduce((max, line) => Math.max(max, line.length), 0) || text.length || 1
+            };
+        }
+
+        function updateStats(paragraphs, characters) {
+            elements.liveStats.textContent = `${paragraphs.length} 段 · ${characters} 字`;
+            elements.previewMeta.textContent = paragraphs.length
+                ? `${paragraphs.length} 段 · ${characters} 字`
+                : '等待正文排版';
+        }
+
+        function renderPreview() {
+            const title = getDisplayTitle();
+            const { paragraphs, characters } = getPreparedContent();
+
+            elements.previewTitle.textContent = title || '未命名章节';
+            elements.previewTitle.dataset.empty = title ? 'false' : 'true';
+
+            elements.previewContent.innerHTML = '';
+
+            if (!paragraphs.length) {
+                const placeholder = document.createElement('p');
+                placeholder.className = 'placeholder';
+                placeholder.innerHTML = '正文预览会显示在这里。<br>输入标题与内容后，可直接导出带满铺水印的长图。';
+                elements.previewContent.appendChild(placeholder);
+                updateStats([], 0);
+                elements.previewCard.dataset.hasContent = 'false';
+            } else {
+                paragraphs.forEach((paragraph) => {
+                    const display = getParagraphDisplayType(paragraph);
+                    const p = document.createElement('p');
+                    p.textContent = display.text;
+                    if (display.className) {
+                        p.className = display.className;
+                    }
+                    elements.previewContent.appendChild(p);
+                });
+                updateStats(paragraphs, characters);
+                elements.previewCard.dataset.hasContent = 'true';
+            }
+
+            updateStyle();
+        }
+
+        function updateStyle() {
+            const fontSize = elements.fontSize.value;
+            const theme = elements.themeMode.value;
+            const watermarkOpacity = Math.min(0.6, Math.max(0.05, Number(elements.watermarkOpacity.value) || 0.09));
+            const watermarkText = normalizeWatermarkText(elements.watermarkText.value) || '小说排版';
+            const watermarkMetrics = getWatermarkMetrics(watermarkText);
+
+            elements.previewContent.style.fontSize = fontSize;
+            elements.previewCard.dataset.theme = theme;
+            elements.previewCard.style.setProperty('--watermark-opacity', watermarkOpacity);
+
+            const watermarkSize = Math.max(18, 30 - Math.floor(watermarkMetrics.longestLineLength / 2));
+            elements.previewCard.style.setProperty('--watermark-size', `${watermarkSize}px`);
+
+            requestAnimationFrame(() => buildWatermarks(watermarkText, watermarkMetrics));
+        }
+
+        function buildWatermarks(text, watermarkMetrics = getWatermarkMetrics(text)) {
+            const width = elements.previewCard.clientWidth;
+            const height = elements.previewCard.clientHeight;
+
+            if (!width || !height) {
+                return;
+            }
+
+            const baseSize = parseInt(getComputedStyle(elements.previewCard).getPropertyValue('--watermark-size'), 10) || 24;
+            const estimatedWidth = Math.max(180, Math.min(360, watermarkMetrics.longestLineLength * baseSize * 0.92 + 72));
+            const estimatedHeight = Math.max(108, baseSize * (watermarkMetrics.lineCount * 1.9 + 1.4));
+            const columns = Math.max(1, Math.floor(width / estimatedWidth));
+            const rows = Math.max(3, Math.ceil(height / estimatedHeight) + 1);
+            const total = columns * rows;
+
+            elements.watermarkLayer.innerHTML = '';
+            elements.watermarkLayer.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`;
+
+            for (let index = 0; index < total; index += 1) {
+                const item = document.createElement('span');
+                const row = Math.floor(index / columns);
+                const col = index % columns;
+                item.className = 'watermark-item';
+                item.textContent = text;
+                if ((row + col) % 2 === 1) {
+                    item.style.transform = 'translateY(14px) rotate(-24deg)';
+                }
+                if ((row + col) % 3 === 0) {
+                    item.style.opacity = '0.9';
+                }
+                elements.watermarkLayer.appendChild(item);
+            }
+        }
+
+        function formatNovel() {
+            const { paragraphs } = getPreparedContent();
+            if (!paragraphs.length) {
+                alert('请先输入小说正文。');
+                return;
+            }
+            renderPreview();
+            alert('排版已更新。');
+        }
+
+        async function exportImage() {
+            const { paragraphs } = getPreparedContent();
+            if (!paragraphs.length) {
+                alert('请先输入并排版正文。');
+                return;
+            }
+
+            renderPreview();
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+
+            const canvas = await html2canvas(elements.previewCard, {
+                scale: 2,
+                useCORS: true,
+                logging: false,
+                backgroundColor: null
+            });
+
+            const title = getDisplayTitle() || '小说排版';
+            const safeTitle = title.replace(/[\\/:*?"<>|]+/g, '-').trim().slice(0, 40) || '小说排版';
+            const link = document.createElement('a');
+            link.download = `${safeTitle}_${Date.now()}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        async function copyFormattedText() {
+            const { paragraphs, characters } = getPreparedContent();
+            if (!paragraphs.length) {
+                alert('没有可复制的正文。');
+                return;
+            }
+
+            const title = getDisplayTitle();
+            const text = (title ? title + '\n\n' : '') + paragraphs.join('\n\n');
+
+            try {
+                await navigator.clipboard.writeText(text);
+                const btn = elements.copyTextButton;
+                const original = btn.textContent;
+                btn.textContent = '已复制 ' + characters + ' 字';
+                btn.style.background = 'rgba(47,119,82,0.15)';
+                setTimeout(() => {
+                    btn.textContent = original;
+                    btn.style.background = '';
+                }, 2000);
+            } catch (error) {
+                alert('复制失败：' + (error?.message || '未知错误'));
+            }
+        }
+
+        function clearContent() {
+            elements.titleInput.value = '';
+            elements.inputContent.value = '';
+            clearDraftCache();
+            renderPreview();
+        }
+
+        function handleDraftInput() {
+            saveDraftCache();
+            renderPreview();
+        }
+
+        elements.formatButton.addEventListener('click', formatNovel);
+        elements.exportButton.addEventListener('click', exportImage);
+        elements.copyTextButton.addEventListener('click', copyFormattedText);
+        elements.clearButton.addEventListener('click', clearContent);
+
+        elements.titleInput.addEventListener('input', handleDraftInput);
+        elements.inputContent.addEventListener('input', handleDraftInput);
+        elements.fontSize.addEventListener('change', updateStyle);
+        elements.themeMode.addEventListener('change', updateStyle);
+        elements.watermarkText.addEventListener('input', updateStyle);
+        elements.watermarkOpacity.addEventListener('input', updateStyle);
+
+        if ('ResizeObserver' in window) {
+            const observer = new ResizeObserver(() => updateStyle());
+            observer.observe(elements.previewCard);
+        } else {
+            window.addEventListener('resize', updateStyle);
+        }
+
+        restoreDraftCache();
+        renderPreview();
+    </script>
+</body>
+</html>
